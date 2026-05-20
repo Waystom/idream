@@ -1,0 +1,173 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --background: #0a1128;
+  --foreground: #f5efe6;
+  --dream-bg: #0a1128;
+  --dream-panel: rgba(18, 27, 56, 0.58);
+  --dream-panel-strong: rgba(10, 17, 40, 0.78);
+  --dream-text: #f5efe6;
+  --dream-muted: rgba(245, 239, 230, 0.58);
+  --dream-line: rgba(243, 194, 107, 0.16);
+  --dream-glow: #f3c26b;
+  --dream-mist: #c5b9e0;
+  --paper-texture:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 7px),
+    radial-gradient(circle at 22% 18%, rgba(243, 194, 107, 0.06), transparent 28%),
+    radial-gradient(circle at 78% 76%, rgba(197, 185, 224, 0.07), transparent 30%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--background);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 20% 6%, rgba(197, 185, 224, 0.16), transparent 34%),
+    radial-gradient(circle at 82% 18%, rgba(243, 194, 107, 0.1), transparent 30%),
+    linear-gradient(180deg, #0a1128 0%, #111326 50%, #1e1b1a 100%);
+  color: var(--foreground);
+}
+
+body[data-theme="light"] {
+  --background: #f4f0e8;
+  --foreground: #1e1b1a;
+  --dream-bg: #f4f0e8;
+  --dream-panel: rgba(255, 255, 255, 0.68);
+  --dream-panel-strong: rgba(255, 255, 255, 0.84);
+  --dream-text: #1e1b1a;
+  --dream-muted: rgba(30, 27, 26, 0.58);
+  --dream-line: rgba(10, 17, 40, 0.1);
+  --dream-glow: #9b6f1e;
+  --dream-mist: #6e6595;
+  background:
+    radial-gradient(circle at 20% 6%, rgba(197, 185, 224, 0.24), transparent 34%),
+    radial-gradient(circle at 82% 18%, rgba(243, 194, 107, 0.18), transparent 30%),
+    linear-gradient(180deg, #f4f0e8 0%, #ece7df 52%, #ded8ce 100%);
+}
+
+body[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(243, 194, 107, 0.72);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(243, 194, 107, 0.24);
+}
+
+.soft-scrollbar {
+  scrollbar-color: rgba(44, 51, 48, 0.3) transparent;
+}
+
+.soft-scrollbar::-webkit-scrollbar {
+  width: 10px;
+}
+
+.soft-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(44, 51, 48, 0.22);
+  border-radius: 999px;
+}
+
+.quiet-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--dream-line);
+  backdrop-filter: blur(18px);
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  color: var(--dream-muted);
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease;
+}
+
+.quiet-button:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(243, 194, 107, 0.28);
+  color: var(--dream-text);
+}
+
+.dream-shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 18% 8%, rgba(197, 185, 224, 0.15), transparent 30%),
+    radial-gradient(circle at 82% 18%, rgba(243, 194, 107, 0.1), transparent 28%),
+    linear-gradient(180deg, var(--dream-bg) 0%, var(--dream-bg) 100%);
+  color: var(--dream-text);
+}
+
+.dream-panel {
+  background-color: var(--dream-panel);
+  background-image: var(--paper-texture);
+  border: 1px solid var(--dream-line);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(22px);
+}
+
+.dream-panel-strong {
+  background-color: var(--dream-panel-strong);
+  background-image: var(--paper-texture);
+  border: 1px solid var(--dream-line);
+  box-shadow: 0 34px 120px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(26px);
+}
+
+.dream-text {
+  color: var(--dream-text);
+}
+
+.dream-muted {
+  color: var(--dream-muted);
+}
+
+.dream-glow-text {
+  color: var(--dream-glow);
+}
+
+.dream-fade {
+  animation: dream-fade 0.8s ease both;
+}
+
+@keyframes dream-fade {
+  from {
+    opacity: 0;
+    filter: blur(10px);
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dream-fade {
+    animation: none;
+  }
+}
