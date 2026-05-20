@@ -33,7 +33,7 @@ import type { LucideIcon } from "lucide-react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient, hasSupabaseBrowserEnv } from "@/lib/supabase/browser";
 import type { AdminStats, BottleStatus, DreamRecordRow, DriftBottleRow, ProfileRow, UserRole } from "@/lib/database";
-import type { AnalystKey, DreamAnalysis, FollowupQuestions, QuestionAnswer } from "@/lib/types";
+import type { AnalystKey, DreamAnalysis, FollowupQuestions, GeneratedImage, QuestionAnswer } from "@/lib/types";
 
 type SessionUser = {
   id?: string;
@@ -531,6 +531,8 @@ export default function Home() {
   const [bottleText, setBottleText] = useState("");
   const [receivedBottle, setReceivedBottle] = useState<DriftBottleRow | null>(null);
   const [isBottleLoading, setIsBottleLoading] = useState(false);
+  const [generatedImage, setGeneratedImage] = useState<GeneratedImage | null>(null);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [authNotice, setAuthNotice] = useState("");
   const [error, setError] = useState("");
 
@@ -827,6 +829,7 @@ export default function Home() {
     setRecords([]);
     setProfile("");
     setAnalysis(null);
+    setGeneratedImage(null);
     setQa([]);
     setStage("home");
   }
@@ -1013,6 +1016,40 @@ export default function Home() {
     }
   }
 
+  async function generateAnalysisImage() {
+    if (!analysis?.imagePrompt) {
+      setError("当前解析还没有可用于生图的提示词。");
+      return;
+    }
+
+    setIsGeneratingImage(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          prompt: analysis.imagePrompt,
+          title: analysis.title
+        })
+      });
+      const data = (await response.json()) as GeneratedImage | { error: string };
+
+      if (!response.ok || "error" in data) {
+        throw new Error("error" in data ? data.error : "生成图片失败。");
+      }
+
+      setGeneratedImage(data);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "生成图片失败。");
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  }
+
   function chooseAnalyst(key: AnalystKey) {
     setSelectedAnalyst(key);
     setStage("consult");
@@ -1021,6 +1058,7 @@ export default function Home() {
     setFollowups(null);
     setFollowupAnswers(Array(5).fill(""));
     setAnalysis(null);
+    setGeneratedImage(null);
     setQa([]);
     setDreamContext("");
     setError("");
@@ -1033,6 +1071,7 @@ export default function Home() {
     setFollowups(null);
     setFollowupAnswers(Array(5).fill(""));
     setAnalysis(null);
+    setGeneratedImage(null);
     setQa([]);
     setDreamContext("");
     setError("");
@@ -1045,6 +1084,7 @@ export default function Home() {
     }
     setProfile("");
     setAnalysis(null);
+    setGeneratedImage(null);
     setDreamContext("");
     setFollowups(null);
     setFollowupAnswers(Array(5).fill(""));
@@ -1426,8 +1466,11 @@ export default function Home() {
               analysis={analysis}
               analyst={analyst}
               profile={profile}
+              generatedImage={generatedImage}
+              isGeneratingImage={isGeneratingImage}
               onInner={() => setStage("inner")}
               onLetter={() => setStage("letter")}
+              onGenerateImage={generateAnalysisImage}
             />
           ) : null}
 
@@ -2146,14 +2189,20 @@ function AnalysisView({
   analysis,
   analyst,
   profile,
+  generatedImage,
+  isGeneratingImage,
   onInner,
-  onLetter
+  onLetter,
+  onGenerateImage
 }: {
   analysis: DreamAnalysis;
   analyst: NonNullable<ReturnType<typeof getAnalyst>>;
   profile: string;
+  generatedImage: GeneratedImage | null;
+  isGeneratingImage: boolean;
   onInner: () => void;
   onLetter: () => void;
+  onGenerateImage: () => void;
 }) {
   const structuredSections = [
     { label: "我听见了什么", text: analysis.heard || analysis.opening },
@@ -2223,6 +2272,34 @@ function AnalysisView({
           <section className="dream-panel p-5">
             <p className="text-xs uppercase tracking-[0.22em] dream-muted">Image Prompt</p>
             <p className="mt-3 text-sm leading-7 dream-muted">{analysis.imagePrompt}</p>
+          </section>
+
+          <section className="dream-panel p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.22em] dream-muted">AI Portrait</p>
+                <h2 className="mt-2 font-serif text-2xl font-semibold">心理画像照片</h2>
+              </div>
+              <button
+                type="button"
+                onClick={onGenerateImage}
+                disabled={isGeneratingImage}
+                className="quiet-button justify-center disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isGeneratingImage ? <Hourglass className="animate-spin" size={15} /> : <Sparkles size={15} />}
+                {isGeneratingImage ? "正在生成" : generatedImage ? "重新生成" : "生成照片"}
+              </button>
+            </div>
+            {generatedImage ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={generatedImage.imageUrl}
+                alt={`${analysis.title} 的心理画像`}
+                className="mt-5 aspect-[4/5] w-full max-w-xl object-cover grayscale-[15%] shadow-[0_28px_90px_rgba(0,0,0,0.22)]"
+              />
+            ) : (
+              <p className="mt-4 text-sm leading-7 dream-muted">使用当前解析里的 imagePrompt，通过 Gemini 生图中转站生成。</p>
+            )}
           </section>
         </div>
 

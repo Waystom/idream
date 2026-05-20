@@ -63,6 +63,16 @@ export type DreamAnalysis = {
   disclaimer: string;
 };
 
+export type ImageGenerationInput = {
+  prompt: string;
+  title?: string;
+};
+
+export type GeneratedImage = {
+  imageUrl: string;
+  mimeType: string;
+};
+
 export type QuestionInput = {
   question: string;
   previousProfile: string;

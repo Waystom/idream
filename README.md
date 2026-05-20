@@ -43,6 +43,23 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 ```
 
+Gemini 生图中转站：
+
+```bash
+GEMINI_IMAGE_API_KEY=your_transit_or_gemini_key
+GEMINI_IMAGE_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+GEMINI_IMAGE_MODEL=gemini-2.5-flash-image-preview
+GEMINI_IMAGE_AUTH_HEADER=x-goog-api-key
+```
+
+如果你的中转站用 OpenAI 风格 Bearer 鉴权，把 `GEMINI_IMAGE_AUTH_HEADER` 改成：
+
+```bash
+GEMINI_IMAGE_AUTH_HEADER=authorization
+```
+
+如果中转站给你的地址已经包含完整的 `:generateContent` 路径，可以直接把完整地址填进 `GEMINI_IMAGE_BASE_URL`。
+
 ## Supabase 初始化
 
 1. 新建 Supabase 项目。
