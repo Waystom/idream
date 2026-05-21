@@ -145,6 +145,11 @@ textarea:focus-visible {
   color: var(--dream-muted);
 }
 
+.dream-text,
+.dream-muted {
+  overflow-wrap: anywhere;
+}
+
 .dream-glow-text {
   color: var(--dream-glow);
 }

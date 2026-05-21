@@ -512,8 +512,8 @@ function SoundscapeControl({
   setVolume: (value: number) => void;
 }) {
   return (
-    <section className="dream-panel mb-6 flex flex-col gap-4 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex items-center gap-3">
+    <section className="dream-panel mb-5 flex flex-col gap-4 px-4 py-3 sm:mb-6 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <button type="button" onClick={() => setSoundOn(!soundOn)} className="quiet-button">
           {soundOn ? <Volume2 size={15} /> : <VolumeX size={15} />}
           <span>{soundOn ? "关闭音景" : "唤醒音景"}</span>
@@ -542,7 +542,7 @@ function SoundscapeControl({
             {soundscapeLabels[item]}
           </button>
         ))}
-        <label className="ml-1 flex items-center gap-2 text-xs dream-muted">
+        <label className="flex w-full items-center gap-2 text-xs dream-muted sm:ml-1 sm:w-auto">
           <span>音量</span>
           <input
             type="range"
@@ -551,7 +551,7 @@ function SoundscapeControl({
             step="0.01"
             value={volume}
             onChange={(event) => setVolume(Number(event.target.value))}
-            className="h-1 w-24 accent-[color:var(--dream-glow)]"
+            className="h-1 min-w-0 flex-1 accent-[color:var(--dream-glow)] sm:w-24 sm:flex-none"
           />
         </label>
       </div>
@@ -1806,7 +1806,7 @@ export default function Home() {
 
   return (
     <main className="dream-shell px-3 py-3 sm:px-5 sm:py-5">
-      <div className="mx-auto grid min-h-[calc(100vh-24px)] w-full max-w-[1500px] gap-5 lg:grid-cols-[244px_1fr]">
+      <div className="mx-auto grid w-full max-w-[1500px] gap-4 lg:min-h-[calc(100vh-40px)] lg:grid-cols-[244px_1fr] lg:gap-5">
         <AppSidebar
           user={user}
           stage={stage}
@@ -1830,7 +1830,7 @@ export default function Home() {
         />
 
         <section className="min-w-0 px-1 pb-5 sm:px-0">
-          <header className="dream-fade mb-5 flex flex-col gap-3 border-b border-[color:var(--dream-line)] pb-5 md:flex-row md:items-end md:justify-between">
+          <header className="dream-fade mb-4 flex flex-col gap-3 border-b border-[color:var(--dream-line)] pb-4 sm:mb-5 sm:pb-5 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.28em] dream-muted">{stageLabel.eyebrow}</p>
               <h1 className="mt-2 font-serif text-3xl font-semibold leading-tight dream-text sm:text-4xl">{stageLabel.label}</h1>
@@ -2042,9 +2042,9 @@ function AuthScreen({
   const signupCoolingDown = isSignup && signupCooldownSeconds > 0;
 
   return (
-    <main className="dream-shell px-5 py-5 sm:px-8">
-      <div className="mx-auto flex min-h-[calc(100vh-40px)] w-full max-w-7xl flex-col">
-        <header className="flex items-center justify-between border-b border-[color:var(--dream-line)] pb-5">
+    <main className="dream-shell px-4 py-4 sm:px-8 sm:py-5">
+      <div className="mx-auto flex min-h-[calc(100vh-32px)] w-full max-w-7xl flex-col">
+        <header className="flex items-center justify-between gap-3 border-b border-[color:var(--dream-line)] pb-4 sm:pb-5">
           <div>
             <p className="font-serif text-2xl font-semibold tracking-wide">Idream</p>
             <p className="mt-1 text-xs uppercase tracking-[0.28em] dream-muted">private dream room</p>
@@ -2052,7 +2052,7 @@ function AuthScreen({
           <div className="flex items-center gap-3 text-xs dream-muted">
             <button type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="quiet-button">
               {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-              {theme === "dark" ? "白色模式" : "黑色模式"}
+              <span className="hidden sm:inline">{theme === "dark" ? "白色模式" : "黑色模式"}</span>
             </button>
             <span className="hidden items-center gap-2 sm:inline-flex">
               <LockKeyhole size={14} />
@@ -2061,36 +2061,36 @@ function AuthScreen({
           </div>
         </header>
 
-        <section className="grid flex-1 gap-10 py-10 lg:grid-cols-[1fr_430px] lg:items-center">
+        <section className="grid flex-1 gap-6 py-6 sm:gap-10 sm:py-10 lg:grid-cols-[1fr_430px] lg:items-center">
           <div className="max-w-4xl">
             <p className="mb-6 inline-flex items-center gap-2 text-sm dream-muted">
               <Moon size={16} />
               请把梦带进来
             </p>
-            <h1 className="max-w-4xl font-serif text-5xl font-semibold leading-[1.04] dream-text sm:text-7xl lg:text-8xl">
+            <h1 className="max-w-4xl font-serif text-4xl font-semibold leading-[1.08] dream-text sm:text-7xl lg:text-8xl">
               进入一间只属于你的梦境咨询室。
             </h1>
-            <p className="mt-8 max-w-2xl font-serif text-xl leading-9 dream-muted sm:text-2xl">
+            <p className="mt-5 max-w-2xl font-serif text-lg leading-8 dream-muted sm:mt-8 sm:text-2xl sm:leading-9">
               选择一位分析者，他会先提问，再解释。你的梦境、追问、画像和信件会在安静的档案里慢慢形成线索。
             </p>
 
-            <div className="mt-12 grid max-w-3xl gap-4 sm:grid-cols-3">
+            <div className="mt-8 grid max-w-3xl gap-3 sm:mt-12 sm:grid-cols-3 sm:gap-4">
               <AuthPrinciple icon={Shield} title="私密" text={supabaseEnabled ? "账号数据由权限规则隔离。" : "当前只保存在本机浏览器。"} />
               <AuthPrinciple icon={Feather} title="缓慢" text="先被追问，再得到解析。" />
               <AuthPrinciple icon={LibraryBig} title="持续" text="每次梦都会修正画像。" />
             </div>
           </div>
 
-          <form onSubmit={enterRoom} className="dream-panel p-6 sm:p-8">
+          <form onSubmit={enterRoom} className="dream-panel p-4 sm:p-8">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.24em] dream-muted">{supabaseEnabled ? "Account" : "Local Entry"}</p>
-                <h2 className="mt-3 font-serif text-4xl font-semibold">{supabaseEnabled ? (isSignup ? "建立账户" : "回到房间") : "进入"}</h2>
+                <h2 className="mt-3 font-serif text-3xl font-semibold sm:text-4xl">{supabaseEnabled ? (isSignup ? "建立账户" : "回到房间") : "进入"}</h2>
               </div>
               <LockKeyhole className="dream-muted" size={18} />
             </div>
 
-            <p className="mt-5 text-sm leading-7 dream-muted">
+            <p className="mt-4 text-sm leading-7 dream-muted sm:mt-5">
               {supabaseEnabled
                 ? isSignup
                   ? signupCoolingDown
@@ -2115,7 +2115,7 @@ function AuthScreen({
             ) : null}
 
             {supabaseEnabled ? (
-              <div className="mt-7 grid grid-cols-2 gap-1 border border-[color:var(--dream-line)] bg-white/5 p-1">
+              <div className="mt-6 grid grid-cols-2 gap-1 border border-[color:var(--dream-line)] bg-white/5 p-1 sm:mt-7">
                 <button
                   type="button"
                   onClick={() => setAuthMode("signin")}
@@ -2134,7 +2134,7 @@ function AuthScreen({
             ) : null}
 
             {supabaseEnabled ? (
-              <div className="mt-7 space-y-5">
+              <div className="mt-6 space-y-4 sm:mt-7 sm:space-y-5">
                 <QuietField label="Email" htmlFor="email">
                   <input
                     id="email"
@@ -2160,7 +2160,7 @@ function AuthScreen({
             ) : null}
 
             {(!supabaseEnabled || isSignup) ? (
-              <div className="mt-7 space-y-5">
+              <div className="mt-6 space-y-4 sm:mt-7 sm:space-y-5">
                 <QuietField label="Name" htmlFor="name">
                   <input
                     id="name"
@@ -2186,7 +2186,7 @@ function AuthScreen({
             <button
               type="submit"
               disabled={isAuthenticating || signupCoolingDown}
-              className="mt-8 inline-flex w-full items-center justify-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-neutral-600 disabled:text-neutral-300"
+              className="mt-7 inline-flex min-h-12 w-full items-center justify-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-neutral-600 disabled:text-neutral-300 sm:mt-8"
             >
               {isAuthenticating ? <Hourglass className="animate-spin" size={16} /> : <ArrowRight size={16} />}
               <span>
@@ -2214,9 +2214,9 @@ function AuthScreen({
 
 function AuthPrinciple({ icon: Icon, title, text }: { icon: LucideIcon; title: string; text: string }) {
   return (
-    <div className="border-t border-[color:var(--dream-line)] pt-5">
+    <div className="border-t border-[color:var(--dream-line)] pt-4 sm:pt-5">
       <Icon size={17} className="dream-muted" />
-      <h3 className="mt-4 font-serif text-2xl font-semibold">{title}</h3>
+      <h3 className="mt-3 font-serif text-xl font-semibold sm:mt-4 sm:text-2xl">{title}</h3>
       <p className="mt-2 text-sm leading-6 dream-muted">{text}</p>
     </div>
   );
@@ -2267,8 +2267,8 @@ function AppSidebar({
   ] satisfies NavItem[]).filter((item) => !item.adminOnly || user.role === "admin");
 
   return (
-    <aside className="dream-panel dream-fade flex flex-col gap-5 p-4 lg:sticky lg:top-5 lg:h-[calc(100vh-40px)]">
-      <div className="flex items-start justify-between gap-3">
+    <aside className="dream-panel dream-fade flex flex-col gap-3 p-3 lg:sticky lg:top-5 lg:h-[calc(100vh-40px)] lg:gap-5 lg:p-4">
+      <div className="flex items-center justify-between gap-3 lg:items-start">
         <button type="button" onClick={() => onStage("home")} className="text-left">
           <p className="font-serif text-2xl font-semibold leading-none">Idream</p>
           <p className="mt-2 text-[10px] uppercase tracking-[0.28em] dream-muted">private room</p>
@@ -2276,14 +2276,14 @@ function AppSidebar({
         <LockKeyhole className="mt-1 dream-muted" size={16} />
       </div>
 
-      <div className="border-y border-[color:var(--dream-line)] py-4">
+      <div className="hidden border-y border-[color:var(--dream-line)] py-4 lg:block">
         <p className="text-xs dream-muted">{user.name}</p>
         <p className="mt-2 line-clamp-2 text-sm leading-6 dream-text">
           {user.intention || "今晚先安静地听一听梦。"}
         </p>
       </div>
 
-      <nav className="grid gap-1">
+      <nav className="grid grid-cols-3 gap-1 sm:grid-cols-6 lg:grid-cols-1">
         {navItems.map((item) => {
           const Icon = item.icon;
           const active = stage === item.stage;
@@ -2294,17 +2294,17 @@ function AppSidebar({
               type="button"
               onClick={() => onStage(item.stage)}
               className={clsx(
-                "group flex min-h-11 items-center justify-between px-3 text-left text-sm transition",
+                "group flex min-h-11 items-center justify-center px-2 text-center text-xs transition sm:text-sm lg:justify-between lg:px-3 lg:text-left",
                 active
                   ? "bg-[color:rgba(243,194,107,0.14)] text-[color:var(--dream-text)]"
                   : "text-[color:var(--dream-muted)] hover:bg-white/[0.06] hover:text-[color:var(--dream-text)]"
               )}
             >
-              <span className="flex items-center gap-3">
+              <span className="flex flex-col items-center gap-1 lg:flex-row lg:gap-3">
                 <Icon size={16} className={clsx(active && "text-[color:var(--dream-glow)]")} />
                 {item.label}
               </span>
-              {item.count ? <span className="text-xs dream-muted">{item.count}</span> : null}
+              {item.count ? <span className="hidden text-xs dream-muted lg:inline">{item.count}</span> : null}
             </button>
           );
         })}
@@ -2313,7 +2313,7 @@ function AppSidebar({
       <button
         type="button"
         onClick={onNewDream}
-        className="mt-1 flex min-h-12 items-center justify-between bg-[color:var(--dream-glow)] px-4 text-left text-sm font-medium text-[#0A1128] transition hover:brightness-110"
+        className="mt-1 flex min-h-11 items-center justify-between bg-[color:var(--dream-glow)] px-4 text-left text-sm font-medium text-[#0A1128] transition hover:brightness-110 lg:min-h-12"
       >
         <span className="flex items-center gap-2">
           <PenLine size={16} />
@@ -2322,7 +2322,7 @@ function AppSidebar({
         <ArrowRight size={16} />
       </button>
 
-      <div className="mt-auto border-t border-[color:var(--dream-line)] pt-4">
+      <div className="mt-auto hidden border-t border-[color:var(--dream-line)] pt-4 lg:block">
         <p className="text-xs uppercase tracking-[0.22em] dream-muted">Current</p>
         <div className="mt-3 flex items-center gap-3">
           {analyst ? (
@@ -2382,18 +2382,18 @@ function HomeView({
   return (
     <section className="dream-fade grid gap-6 xl:grid-cols-[1fr_360px]">
       <div className="space-y-6">
-        <section className="min-h-[420px] border-b border-[color:var(--dream-line)] pb-8">
+        <section className="border-b border-[color:var(--dream-line)] pb-6 sm:min-h-[420px] sm:pb-8">
           <p className="inline-flex items-center gap-2 text-sm dream-muted">
             <Moon size={16} />
             晚上好，{user.name}
           </p>
-          <h2 className="mt-8 max-w-4xl font-serif text-5xl font-semibold leading-[1.08] dream-text sm:text-6xl">
+          <h2 className="mt-5 max-w-4xl font-serif text-4xl font-semibold leading-[1.1] dream-text sm:mt-8 sm:text-6xl sm:leading-[1.08]">
             把梦带到一间更安静的房间。
           </h2>
-          <p className="mt-7 max-w-2xl font-serif text-xl leading-9 dream-muted">
+          <p className="mt-5 max-w-2xl font-serif text-lg leading-8 dream-muted sm:mt-7 sm:text-xl sm:leading-9">
             从一位分析者开始，先被提问，再被理解。你的梦境、追问和画像会留在本地档案里，慢慢形成一条内在线索。
           </p>
-          <div className="mt-10 flex flex-wrap gap-3">
+          <div className="mt-7 flex flex-wrap gap-3 sm:mt-10">
             <button type="button" onClick={onStart} className="inline-flex items-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110">
               <Feather size={16} />
               开始一次咨询
@@ -2430,7 +2430,7 @@ function HomeView({
       <aside className="space-y-5">
         <section className="dream-panel p-6">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Quiet Status</p>
-          <div className="mt-5 grid grid-cols-3 gap-3">
+          <div className="mt-5 grid grid-cols-3 gap-2 sm:gap-3">
             <Stat label="梦" value={records.length.toString()} />
             <Stat label="问" value={totalQaCount.toString()} />
             <Stat label="母题" value={motifs.length.toString()} />
@@ -2469,9 +2469,9 @@ function HomeAction({
   onClick: () => void;
 }) {
   return (
-    <button type="button" onClick={onClick} className="group min-h-44 border-t border-[color:var(--dream-line)] py-5 text-left transition hover:border-[color:rgba(243,194,107,0.48)]">
+    <button type="button" onClick={onClick} className="group border-t border-[color:var(--dream-line)] py-4 text-left transition hover:border-[color:rgba(243,194,107,0.48)] sm:min-h-44 sm:py-5">
       <Icon size={18} className="dream-muted transition group-hover:text-[color:var(--dream-glow)]" />
-      <h3 className="mt-5 font-serif text-2xl font-semibold">{title}</h3>
+      <h3 className="mt-4 font-serif text-2xl font-semibold sm:mt-5">{title}</h3>
       <p className="mt-3 text-sm leading-7 dream-muted">{text}</p>
     </button>
   );
@@ -2485,25 +2485,25 @@ function ChooseAnalyst({
   onChoose: (key: AnalystKey) => void;
 }) {
   return (
-    <section className="dream-fade py-8">
-      <div className="mb-10 max-w-3xl">
+    <section className="dream-fade py-3 sm:py-8">
+      <div className="mb-7 max-w-3xl sm:mb-10">
         <p className="mb-4 text-xs uppercase tracking-[0.3em] dream-muted">Choose The Analyst</p>
-        <h1 className="font-serif text-4xl font-semibold leading-tight dream-text sm:text-5xl">
+        <h1 className="font-serif text-3xl font-semibold leading-tight dream-text sm:text-5xl">
           选择一位与你一起进入梦的人
         </h1>
         <p className="mt-4 font-serif text-lg leading-8 dream-muted">
-          本轮梦境只由一位心理学家分析。鼠标停留在画像上，房间会亮起一点。
+          本轮梦境只由一位心理学家分析。点击或停留在画像上，房间会亮起一点。
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-4 sm:gap-6 lg:grid-cols-3">
         {analysts.map((analyst) => (
           <button
             key={analyst.key}
             type="button"
             onClick={() => onChoose(analyst.key)}
             className={clsx(
-              "group relative min-h-[560px] overflow-hidden text-left transition duration-500 hover:-translate-y-1",
+              "group relative min-h-[420px] overflow-hidden text-left transition duration-500 hover:-translate-y-1 sm:min-h-[560px]",
               "dream-panel",
               selectedAnalyst === analyst.key && "shadow-[0_35px_100px_rgba(0,0,0,0.2)]"
             )}
@@ -2518,11 +2518,11 @@ function ChooseAnalyst({
             />
             <div className="absolute inset-0 bg-gradient-to-t from-neutral-950 via-neutral-950/42 to-neutral-200/10 transition duration-500 group-hover:from-neutral-950 group-hover:via-neutral-950/25" />
             <div className="absolute inset-x-[18%] top-[10%] h-[64%] rounded-[50%] ring-0 ring-white/0 transition duration-700 group-hover:ring-[1px] group-hover:ring-white/45" />
-            <div className="absolute inset-x-0 bottom-0 p-6 text-white">
+            <div className="absolute inset-x-0 bottom-0 p-5 text-white sm:p-6">
               <p className="text-xs uppercase tracking-[0.24em] text-white/54">{analyst.english}</p>
-              <h2 className="mt-3 font-serif text-4xl font-semibold">{analyst.name}</h2>
+              <h2 className="mt-3 font-serif text-3xl font-semibold sm:text-4xl">{analyst.name}</h2>
               <p className="mt-2 text-sm text-white/72">{analyst.title}</p>
-              <p className="mt-6 max-w-sm text-sm leading-7 text-white/72 opacity-80 transition group-hover:opacity-100">
+              <p className="mt-4 max-w-sm text-sm leading-7 text-white/72 opacity-80 transition group-hover:opacity-100 sm:mt-6">
                 {analyst.note}
               </p>
               <span className="mt-6 inline-flex items-center gap-2 text-sm font-medium text-white">
@@ -2567,9 +2567,9 @@ function ConsultRoom({
         : "继续";
 
   return (
-    <section className="dream-panel-strong dream-fade min-h-[calc(100vh-120px)]">
-      <div className="relative grid min-h-[calc(100vh-120px)] overflow-hidden lg:grid-cols-[42%_1fr]">
-        <div className="relative min-h-[420px] bg-[#0A1128]/60">
+    <section className="dream-panel-strong dream-fade lg:min-h-[calc(100vh-120px)]">
+      <div className="relative grid overflow-hidden lg:min-h-[calc(100vh-120px)] lg:grid-cols-[42%_1fr]">
+        <div className="relative min-h-[260px] bg-[#0A1128]/60 sm:min-h-[340px] lg:min-h-[420px]">
           <div className="absolute left-1/2 top-12 z-10 h-[70%] w-[56%] -translate-x-1/2 rounded-[48%_48%_38%_38%] bg-white/18 blur-2xl" />
           <Image
             src={analyst.portrait}
@@ -2578,15 +2578,15 @@ function ConsultRoom({
             sizes="(min-width: 1024px) 42vw, 100vw"
             className="absolute inset-0 h-full w-full object-cover object-top grayscale opacity-70"
           />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#0A1128]/35 via-[#0A1128]/20 to-[color:var(--dream-bg)]" />
-          <div className="absolute bottom-8 left-8 right-8">
+          <div className="absolute inset-0 bg-gradient-to-t from-[#0A1128]/90 via-[#0A1128]/28 to-transparent lg:bg-gradient-to-r lg:from-[#0A1128]/35 lg:via-[#0A1128]/20 lg:to-[color:var(--dream-bg)]" />
+          <div className="absolute bottom-5 left-5 right-5 sm:bottom-8 sm:left-8 sm:right-8">
             <p className="text-xs uppercase tracking-[0.28em] dream-muted">{analyst.english}</p>
-            <h1 className="mt-3 font-serif text-5xl font-semibold">{analyst.name}</h1>
+            <h1 className="mt-3 font-serif text-4xl font-semibold sm:text-5xl">{analyst.name}</h1>
             <p className="mt-3 text-sm dream-muted">{analyst.title}</p>
           </div>
         </div>
 
-        <div className="flex min-h-[520px] flex-col justify-between p-6 sm:p-8 lg:p-10">
+        <div className="flex min-h-0 flex-col justify-between p-4 sm:p-8 lg:min-h-[520px] lg:p-10">
           <div className="flex items-center justify-between text-xs uppercase tracking-[0.22em] text-neutral-500">
             <span>Consultation</span>
             <span>
@@ -2594,17 +2594,17 @@ function ConsultRoom({
             </span>
           </div>
 
-          <div className="my-8 max-w-3xl">
+          <div className="my-6 max-w-3xl sm:my-8">
             <p className="text-sm dream-muted">{step.label}</p>
             <p className="mt-5 font-serif text-3xl leading-[1.45] dream-text sm:text-4xl">{step.prompt}</p>
           </div>
 
-          <div className="dream-panel p-5 sm:p-6">
+          <div className="dream-panel p-4 sm:p-6">
             {isLong ? (
               <textarea
                 value={answer}
                 onChange={(event) => onAnswer(event.target.value)}
-                className="soft-scrollbar min-h-36 w-full resize-y bg-transparent text-base leading-7 dream-text placeholder:text-white/30"
+                className="soft-scrollbar min-h-32 w-full resize-y bg-transparent text-base leading-7 dream-text placeholder:text-white/30 sm:min-h-36"
                 placeholder={step.placeholder}
               />
             ) : (
@@ -2616,12 +2616,12 @@ function ConsultRoom({
               />
             )}
 
-            <div className="mt-5 flex items-center justify-between gap-3">
+            <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
               <button
                 type="button"
                 onClick={onBack}
                 disabled={stepIndex === 0 || isLoading}
-                className="inline-flex items-center gap-2 px-1 py-2 text-sm text-neutral-400 transition hover:text-neutral-100 disabled:cursor-not-allowed disabled:text-neutral-700"
+                className="inline-flex items-center justify-center gap-2 px-1 py-2 text-sm text-neutral-400 transition hover:text-neutral-100 disabled:cursor-not-allowed disabled:text-neutral-700 sm:justify-start"
               >
                 <ArrowLeft size={16} />
                 返回
@@ -2630,7 +2630,7 @@ function ConsultRoom({
                 type="button"
                 onClick={onNext}
                 disabled={isLoading}
-                className="inline-flex min-w-36 items-center justify-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-neutral-600 disabled:text-neutral-300"
+                className="inline-flex min-h-12 w-full items-center justify-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-neutral-600 disabled:text-neutral-300 sm:w-auto sm:min-w-36"
               >
                 {isLoading ? <Hourglass className="animate-spin" size={16} /> : <ArrowRight size={16} />}
                 {isLoading ? "请稍候" : buttonText}
@@ -2675,12 +2675,12 @@ function AnalysisView({
 
   return (
     <section className="dream-fade grid gap-6 lg:grid-cols-[1fr_340px]">
-      <article className="dream-panel px-6 py-7 sm:px-10 sm:py-10">
+      <article className="dream-panel px-4 py-6 sm:px-10 sm:py-10">
         <p className="text-xs uppercase tracking-[0.28em] dream-muted">Dream Analysis / {analyst.name}</p>
-        <h1 className="mt-4 font-serif text-5xl font-semibold leading-tight dream-text">{analysis.title}</h1>
-        <p className="mt-6 font-serif text-xl leading-10 dream-muted">{analysis.opening}</p>
+        <h1 className="mt-4 font-serif text-4xl font-semibold leading-tight dream-text sm:text-5xl">{analysis.title}</h1>
+        <p className="mt-5 font-serif text-lg leading-8 dream-muted sm:mt-6 sm:text-xl sm:leading-10">{analysis.opening}</p>
 
-        <div className="mt-10 grid gap-4 md:grid-cols-2">
+        <div className="mt-8 grid gap-4 md:grid-cols-2 sm:mt-10">
           {structuredSections.map((section) => (
             <section key={section.label} className="border-t border-[color:var(--dream-line)] pt-5">
               <p className="text-xs uppercase tracking-[0.2em] dream-muted">{section.label}</p>
@@ -2689,11 +2689,11 @@ function AnalysisView({
           ))}
         </div>
 
-        <div className="mt-10 space-y-9">
+        <div className="mt-8 space-y-8 sm:mt-10 sm:space-y-9">
           {analysis.readings.map((reading) => (
             <section key={reading.key}>
               <p className="text-xs uppercase tracking-[0.22em] dream-muted">{reading.title}</p>
-              <h2 className="mt-3 font-serif text-3xl font-semibold">{reading.name}</h2>
+              <h2 className="mt-3 font-serif text-2xl font-semibold sm:text-3xl">{reading.name}</h2>
               <p className="mt-4 text-base leading-8 dream-muted">{reading.reading}</p>
             </section>
           ))}
@@ -2726,12 +2726,12 @@ function AnalysisView({
             </div>
           </section>
 
-          <section className="dream-panel p-5">
+          <section className="dream-panel p-4 sm:p-5">
             <p className="text-xs uppercase tracking-[0.22em] dream-muted">After Dream Ritual</p>
             <p className="mt-3 text-sm leading-7 dream-muted">{analysis.ritual}</p>
           </section>
 
-          <section className="dream-panel p-5">
+          <section className="dream-panel p-4 sm:p-5">
             <p className="text-xs uppercase tracking-[0.22em] dream-muted">Reality Check</p>
             <h2 className="mt-2 font-serif text-2xl font-semibold">这次分析贴近你吗？</h2>
             <div className="mt-4 grid gap-2 sm:grid-cols-3">
@@ -2756,12 +2756,12 @@ function AnalysisView({
             <p className="mt-3 text-xs leading-6 dream-muted">你的反馈会影响之后怎么看待这条画像，不会被当成绝对结论。</p>
           </section>
 
-          <section className="dream-panel p-5">
+          <section className="dream-panel p-4 sm:p-5">
             <p className="text-xs uppercase tracking-[0.22em] dream-muted">Image Prompt</p>
             <p className="mt-3 text-sm leading-7 dream-muted">{analysis.imagePrompt}</p>
           </section>
 
-          <section className="dream-panel p-5">
+          <section className="dream-panel p-4 sm:p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.22em] dream-muted">AI Portrait</p>
@@ -2771,7 +2771,7 @@ function AnalysisView({
                 type="button"
                 onClick={onGenerateImage}
                 disabled={isGeneratingImage}
-                className="quiet-button justify-center disabled:cursor-not-allowed disabled:opacity-60"
+                className="quiet-button w-full justify-center disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 {isGeneratingImage ? <Hourglass className="animate-spin" size={15} /> : <Sparkles size={15} />}
                 {isGeneratingImage ? "正在生成" : generatedImage ? "重新生成" : "生成照片"}
@@ -2794,7 +2794,7 @@ function AnalysisView({
       </article>
 
       <aside className="space-y-5">
-        <section className="dream-panel p-6">
+        <section className="dream-panel p-5 sm:p-6">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Profile</p>
           <h2 className="mt-3 font-serif text-2xl font-semibold">持续画像</h2>
           <p className="mt-5 text-sm leading-7 dream-muted">{profile}</p>
@@ -2803,7 +2803,7 @@ function AnalysisView({
         <button
           type="button"
           onClick={onInner}
-          className="dream-panel group flex w-full items-center justify-between p-6 text-left transition hover:border-[color:rgba(243,194,107,0.36)]"
+          className="dream-panel group flex w-full items-center justify-between gap-4 p-5 text-left transition hover:border-[color:rgba(243,194,107,0.36)] sm:p-6"
         >
           <span>
             <span className="block font-serif text-2xl font-semibold">对我的内心发问</span>
@@ -2815,7 +2815,7 @@ function AnalysisView({
         <button
           type="button"
           onClick={onLetter}
-          className="dream-panel group flex w-full items-center justify-between p-6 text-left transition hover:border-[color:rgba(197,185,224,0.42)]"
+          className="dream-panel group flex w-full items-center justify-between gap-4 p-5 text-left transition hover:border-[color:rgba(197,185,224,0.42)] sm:p-6"
         >
           <span>
             <span className="block font-serif text-2xl font-semibold">保存为信件</span>
@@ -2846,14 +2846,14 @@ function LetterView({
         返回解析
       </button>
 
-      <article className="dream-panel px-6 py-8 sm:px-12 sm:py-12">
+      <article className="dream-panel px-4 py-6 sm:px-12 sm:py-12">
         <div className="border-b border-[color:var(--dream-line)] pb-8">
           <p className="text-xs uppercase tracking-[0.28em] dream-muted">A Private Letter / {analyst.name}</p>
-          <h1 className="mt-4 font-serif text-5xl font-semibold leading-tight">{analysis.title}</h1>
+          <h1 className="mt-4 font-serif text-4xl font-semibold leading-tight sm:text-5xl">{analysis.title}</h1>
           <p className="mt-4 text-sm dream-muted">{new Date().toLocaleDateString("zh-CN")}</p>
         </div>
 
-        <div className="mt-10 whitespace-pre-line font-serif text-2xl leading-[1.75] dream-text">
+        <div className="mt-8 whitespace-pre-line font-serif text-xl leading-[1.75] dream-text sm:mt-10 sm:text-2xl">
           {getReadingLetter(analysis, user.name)}
         </div>
 
@@ -2888,13 +2888,13 @@ function InnerQuestionView({
   onBack: () => void;
 }) {
   return (
-    <section className="dream-fade grid gap-6 lg:grid-cols-[360px_1fr]">
-      <aside className="dream-panel p-6">
+    <section className="dream-fade grid gap-5 lg:grid-cols-[360px_1fr] lg:gap-6">
+      <aside className="dream-panel p-5 sm:p-6">
         <button type="button" onClick={onBack} className="mb-8 inline-flex items-center gap-2 text-sm text-neutral-400 hover:text-white">
           <ArrowLeft size={16} />
           返回解析
         </button>
-        <div className="relative h-80 w-full">
+        <div className="relative h-56 w-full sm:h-80">
           <Image
             src={analyst.portrait}
             alt={analyst.english}
@@ -2908,11 +2908,11 @@ function InnerQuestionView({
         <p className="mt-4 text-sm leading-7 text-neutral-300">剩余 {questionSlots} 次。每个问题都会继续修正你的画像。</p>
       </aside>
 
-      <div className="dream-panel p-6 sm:p-8">
+      <div className="dream-panel p-4 sm:p-8">
         <div className="space-y-6">
           {qa.length === 0 ? (
-            <div className="flex min-h-64 items-center justify-center text-center">
-              <p className="max-w-lg font-serif text-2xl leading-10 text-neutral-500">
+            <div className="flex min-h-48 items-center justify-center text-center sm:min-h-64">
+              <p className="max-w-lg font-serif text-xl leading-9 text-neutral-500 sm:text-2xl sm:leading-10">
                 这里不是聊天窗口，而是一间更深的房间。问一个你真正想知道的问题。
               </p>
             </div>
@@ -2921,14 +2921,14 @@ function InnerQuestionView({
           {qa.map((item, index) => (
             <article key={`${item.question}-${index}`} className="dream-panel p-5">
               <p className="text-xs uppercase tracking-[0.2em] dream-muted">Question {index + 1}</p>
-              <h2 className="mt-3 font-serif text-2xl font-semibold">{item.question}</h2>
+              <h2 className="mt-3 font-serif text-xl font-semibold sm:text-2xl">{item.question}</h2>
               <p className="mt-4 text-sm leading-7 dream-muted">{item.answer}</p>
               <p className="mt-3 text-xs dream-glow-text">{item.reflection}</p>
             </article>
           ))}
         </div>
 
-        <form onSubmit={submitQuestion} className="dream-panel mt-8 p-5">
+        <form onSubmit={submitQuestion} className="dream-panel mt-6 p-4 sm:mt-8 sm:p-5">
           <textarea
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
@@ -2940,7 +2940,7 @@ function InnerQuestionView({
             <button
               type="submit"
               disabled={qa.length >= 3 || isAsking}
-              className="inline-flex min-w-32 items-center justify-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
+              className="inline-flex min-h-12 w-full items-center justify-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400 sm:w-auto sm:min-w-32"
             >
               {isAsking ? <Hourglass className="animate-spin" size={16} /> : <Sparkles size={16} />}
               {isAsking ? "正在回应" : "发问"}
@@ -2948,7 +2948,7 @@ function InnerQuestionView({
           </div>
         </form>
 
-        <section className="dream-panel mt-6 p-5">
+        <section className="dream-panel mt-5 p-4 sm:mt-6 sm:p-5">
           <p className="text-xs uppercase tracking-[0.22em] dream-muted">Current Profile</p>
           <p className="mt-3 text-sm leading-7 dream-muted">{profile}</p>
         </section>
@@ -2969,8 +2969,8 @@ function ArchiveView({
   onSelect: (recordId: string) => void;
 }) {
   return (
-    <section className="dream-fade grid gap-6 xl:grid-cols-[360px_1fr]">
-      <aside className="dream-panel p-5">
+    <section className="dream-fade grid gap-5 xl:grid-cols-[360px_1fr] xl:gap-6">
+      <aside className="dream-panel p-4 sm:p-5">
         <p className="text-xs uppercase tracking-[0.24em] dream-muted">Archive</p>
         <h1 className="mt-3 font-serif text-4xl font-semibold">梦境档案馆</h1>
         <p className="mt-4 text-sm leading-7 dream-muted">
@@ -2981,7 +2981,7 @@ function ArchiveView({
           <Stat label="母题" value={motifs.length.toString()} />
         </div>
 
-        <div className="soft-scrollbar mt-6 max-h-[54vh] space-y-2 overflow-y-auto pr-1">
+        <div className="soft-scrollbar mt-6 max-h-72 space-y-2 overflow-y-auto pr-1 sm:max-h-[54vh]">
           {records.map((record) => (
             <button
               key={record.id}
@@ -3013,17 +3013,17 @@ function ArchiveView({
 
 function ArchiveDetail({ record, motifs }: { record: DreamRecord; motifs: Array<[string, number]> }) {
   return (
-    <article className="dream-panel px-6 py-7 sm:px-9 sm:py-9">
+    <article className="dream-panel px-4 py-6 sm:px-9 sm:py-9">
       <div className="flex flex-col gap-3 border-b border-[color:var(--dream-line)] pb-7 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">{record.analystName}</p>
-          <h2 className="mt-3 font-serif text-5xl font-semibold leading-tight">{record.analysis.title}</h2>
-          <p className="mt-4 max-w-3xl font-serif text-xl leading-9 dream-muted">{record.analysis.opening}</p>
+          <h2 className="mt-3 font-serif text-4xl font-semibold leading-tight sm:text-5xl">{record.analysis.title}</h2>
+          <p className="mt-4 max-w-3xl font-serif text-lg leading-8 dream-muted sm:text-xl sm:leading-9">{record.analysis.opening}</p>
         </div>
         <p className="shrink-0 text-xs dream-muted">{formatDateTime(record.createdAt)}</p>
       </div>
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_280px]">
+      <div className="mt-7 grid gap-6 lg:mt-8 lg:grid-cols-[1fr_280px]">
         <div className="space-y-8">
           <section>
             <p className="text-xs uppercase tracking-[0.22em] dream-muted">Dream</p>
@@ -3154,22 +3154,22 @@ function ProfileView({
   const latest = records[0];
 
   return (
-    <section className="dream-fade grid gap-6 xl:grid-cols-[1fr_360px]">
-      <article className="dream-panel p-7 sm:p-10">
+    <section className="dream-fade grid gap-5 xl:grid-cols-[1fr_360px] xl:gap-6">
+      <article className="dream-panel p-4 sm:p-10">
         <p className="text-xs uppercase tracking-[0.24em] dream-muted">Inner Profile</p>
-        <h1 className="mt-3 font-serif text-5xl font-semibold">我的内在画像</h1>
-        <p className="mt-7 whitespace-pre-line text-base leading-8 dream-muted">
+        <h1 className="mt-3 font-serif text-4xl font-semibold sm:text-5xl">我的内在画像</h1>
+        <p className="mt-5 whitespace-pre-line text-base leading-8 dream-muted sm:mt-7">
           {profile || "完成一次完整解析后，这里会出现持续更新的内在画像。"}
         </p>
 
-        <div className="mt-10 grid gap-5 md:grid-cols-2">
+        <div className="mt-8 grid gap-5 md:grid-cols-2 sm:mt-10">
           <ProfileModule title="最近张力" text={latest?.analysis.presentTension || "还需要一次完整解析来生成。"} />
           <ProfileModule title="可能的隐藏需要" text={latest?.analysis.hiddenNeed || latest?.analysis.lifeGuess || "画像会从梦境与追问里慢慢形成。"} />
           <ProfileModule title="关系与行动模式" text={latest?.analysis.relationshipPattern || "多次梦境之后，这里会更清楚地呈现反复模式。"} />
           <ProfileModule title="不过度解读提醒" text={latest?.analysis.avoidOverInterpreting || "这里的内容只作为自我探索，不把梦固定成命运或诊断。"} />
         </div>
 
-        <section className="mt-12 border-t border-[color:var(--dream-line)] pt-7">
+        <section className="mt-10 border-t border-[color:var(--dream-line)] pt-7 sm:mt-12">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Profile Timeline</p>
           <h2 className="mt-3 font-serif text-3xl font-semibold">画像怎样变化</h2>
           <div className="mt-6 space-y-4">
@@ -3198,7 +3198,7 @@ function ProfileView({
       </article>
 
       <aside className="space-y-5">
-        <section className="dream-panel p-6">
+        <section className="dream-panel p-5 sm:p-6">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Overview</p>
           <div className="mt-5 grid grid-cols-2 gap-3">
             <Stat label="梦境" value={records.length.toString()} />
@@ -3206,7 +3206,7 @@ function ProfileView({
           </div>
         </section>
 
-        <section className="dream-panel p-6">
+        <section className="dream-panel p-5 sm:p-6">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Recurring Motifs</p>
           <div className="mt-4 flex flex-wrap gap-2">
             {motifs.length ? motifs.map(([motif, count]) => (
@@ -3217,7 +3217,7 @@ function ProfileView({
           </div>
         </section>
 
-        <section className="dream-panel p-6">
+        <section className="dream-panel p-5 sm:p-6">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Next Questions</p>
           <div className="mt-4 space-y-3">
             {(latest?.analysis.nextQuestions || ["我最近总在回避什么？", "我真正需要谁的理解？", "我下一步可以轻一点吗？"]).slice(0, 3).map((item) => (
@@ -3226,7 +3226,7 @@ function ProfileView({
           </div>
         </section>
 
-        <section className="dream-panel p-6">
+        <section className="dream-panel p-5 sm:p-6">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Latest Ritual</p>
           <p className="mt-4 text-sm leading-7 dream-muted">{latest?.analysis.ritual || "完成一次解析后，这里会出现梦后仪式。"}</p>
         </section>
@@ -3278,11 +3278,11 @@ function SettingsView({
   onSignOut: () => void;
 }) {
   return (
-    <section className="dream-fade grid gap-6 xl:grid-cols-[1fr_360px]">
+    <section className="dream-fade grid gap-5 xl:grid-cols-[1fr_360px] xl:gap-6">
       <div className="space-y-6">
-        <section className="dream-panel p-7 sm:p-9">
+        <section className="dream-panel p-4 sm:p-9">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Room Tone</p>
-          <h2 className="mt-3 font-serif text-4xl font-semibold">房间的光线</h2>
+          <h2 className="mt-3 font-serif text-3xl font-semibold sm:text-4xl">房间的光线</h2>
           <div className="mt-7 flex flex-wrap gap-3">
             <button
               type="button"
@@ -3312,15 +3312,15 @@ function SettingsView({
           setVolume={setVolume}
         />
 
-        <section className="dream-panel p-7 sm:p-9">
+        <section className="dream-panel p-4 sm:p-9">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Privacy</p>
-          <h2 className="mt-3 font-serif text-4xl font-semibold">{cloudMode ? "账户与云端记忆" : "本地记忆"}</h2>
+          <h2 className="mt-3 font-serif text-3xl font-semibold sm:text-4xl">{cloudMode ? "账户与云端记忆" : "本地记忆"}</h2>
           <p className="mt-5 max-w-2xl text-sm leading-7 dream-muted">
             {cloudMode
               ? `当前账户：${user.email || user.name}。梦境档案会写入 Supabase，并由 RLS 权限隔离。`
               : "当前未配置 Supabase，来访者信息、梦境档案和持续画像只保存在这个浏览器的 localStorage 中。"}
           </p>
-          <div className="mt-7 flex flex-wrap gap-3">
+          <div className="mt-7 grid gap-3 sm:flex sm:flex-wrap">
             <button type="button" onClick={exportArchive} className="quiet-button">
               <Shield size={15} />
               导出档案
@@ -3342,7 +3342,7 @@ function SettingsView({
           </div>
         </section>
 
-        <section className="dream-panel p-7 sm:p-9">
+        <section className="dream-panel p-4 sm:p-9">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Data Boundary</p>
           <h2 className="mt-3 font-serif text-3xl font-semibold">隐私与心理边界</h2>
           <div className="mt-5 grid gap-4 text-sm leading-7 dream-muted md:grid-cols-2">
@@ -3353,7 +3353,7 @@ function SettingsView({
       </div>
 
       <aside className="space-y-5">
-        <section className="dream-panel p-6">
+        <section className="dream-panel p-5 sm:p-6">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Memory</p>
           <div className="mt-5 grid grid-cols-2 gap-3">
             <Stat label="档案" value={recordsCount.toString()} />
@@ -3361,7 +3361,7 @@ function SettingsView({
           </div>
         </section>
 
-        <section className="dream-panel p-6">
+        <section className="dream-panel p-5 sm:p-6">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Low Frequency</p>
           <p className="mt-4 text-sm leading-7 dream-muted">
             清空、导出、音景和主题都被放在设置里，主流程只保留咨询和回看，减少打扰。
@@ -3390,15 +3390,15 @@ function NightSeaView({
   receiveBottle: () => void;
 }) {
   return (
-    <section className="dream-fade grid gap-6 xl:grid-cols-[1fr_340px]">
-      <article className="dream-panel min-h-[520px] p-7 sm:p-10">
+    <section className="dream-fade grid gap-5 xl:grid-cols-[1fr_340px] xl:gap-6">
+      <article className="dream-panel p-4 sm:min-h-[520px] sm:p-10">
         <p className="text-xs uppercase tracking-[0.24em] dream-muted">Night Sea</p>
-        <h2 className="mt-3 font-serif text-5xl font-semibold leading-tight">夜海</h2>
-        <p className="mt-7 max-w-2xl font-serif text-xl leading-9 dream-muted">
+        <h2 className="mt-3 font-serif text-4xl font-semibold leading-tight sm:text-5xl">夜海</h2>
+        <p className="mt-5 max-w-2xl font-serif text-lg leading-8 dream-muted sm:mt-7 sm:text-xl sm:leading-9">
           投递一段温柔但不越界的话，或捞起别人的一句话。每天最多三次，所有投递都会先进入审核。
         </p>
 
-        <form onSubmit={submitBottle} className="dream-panel mt-10 p-5">
+        <form onSubmit={submitBottle} className="dream-panel mt-8 p-4 sm:mt-10 sm:p-5">
           <p className="text-xs uppercase tracking-[0.22em] dream-muted">Send</p>
           <textarea
             value={bottleText}
@@ -3407,12 +3407,12 @@ function NightSeaView({
             className="mt-4 min-h-32 w-full resize-y bg-transparent text-base leading-7 dream-text placeholder:text-white/30 disabled:cursor-not-allowed"
             placeholder={cloudMode ? "写一句你愿意放进夜海的话。" : "配置 Supabase 后可以投递。"}
           />
-          <div className="mt-4 flex items-center justify-between gap-3">
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs dream-muted">{bottleText.length}/280</p>
             <button
               type="submit"
               disabled={!cloudMode || isLoading}
-              className="inline-flex min-w-32 items-center justify-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
+              className="inline-flex min-h-12 w-full items-center justify-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400 sm:w-auto sm:min-w-32"
             >
               {isLoading ? <Hourglass className="animate-spin" size={16} /> : <Mail size={16} />}
               投递审核
@@ -3421,19 +3421,19 @@ function NightSeaView({
         </form>
 
         <section className="mt-8 border-t border-[color:var(--dream-line)] pt-7">
-          <button type="button" onClick={receiveBottle} disabled={!cloudMode || isLoading} className="quiet-button">
+          <button type="button" onClick={receiveBottle} disabled={!cloudMode || isLoading} className="quiet-button w-full justify-center sm:w-auto">
             {isLoading ? <Hourglass className="animate-spin" size={15} /> : <Waves size={15} />}
             捞起一只漂流瓶
           </button>
           {receivedBottle ? (
-            <p className="mt-5 max-w-2xl font-serif text-2xl leading-10 dream-text">{receivedBottle.body}</p>
+            <p className="mt-5 max-w-2xl font-serif text-xl leading-9 dream-text sm:text-2xl sm:leading-10">{receivedBottle.body}</p>
           ) : (
             <p className="mt-5 text-sm leading-7 dream-muted">捞起的内容会出现在这里。不会显示对方身份。</p>
           )}
         </section>
       </article>
 
-      <aside className="dream-panel p-6">
+      <aside className="dream-panel p-5 sm:p-6">
         <p className="text-xs uppercase tracking-[0.24em] dream-muted">Future Module</p>
         <h3 className="mt-3 font-serif text-3xl font-semibold">温情，但不喧哗</h3>
         <p className="mt-5 text-sm leading-7 dream-muted">
@@ -3464,12 +3464,12 @@ function AdminView({
   }
 
   return (
-    <section className="dream-fade grid gap-6 xl:grid-cols-[1fr_340px]">
-      <article className="dream-panel p-7 sm:p-10">
+    <section className="dream-fade grid gap-5 xl:grid-cols-[1fr_340px] xl:gap-6">
+      <article className="dream-panel p-4 sm:p-10">
         <div className="flex flex-col gap-4 border-b border-[color:var(--dream-line)] pb-7 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.24em] dream-muted">Admin Console</p>
-            <h2 className="mt-3 font-serif text-5xl font-semibold leading-tight">审核与管理</h2>
+            <h2 className="mt-3 font-serif text-4xl font-semibold leading-tight sm:text-5xl">审核与管理</h2>
           </div>
           <button type="button" onClick={onRefresh} className="quiet-button">
             {isLoading ? <Hourglass className="animate-spin" size={15} /> : <Archive size={15} />}
@@ -3488,11 +3488,11 @@ function AdminView({
           <p className="text-xs uppercase tracking-[0.22em] dream-muted">Pending Bottles</p>
           <div className="mt-5 space-y-4">
             {bottles.length ? bottles.map((bottle) => (
-              <article key={bottle.id} className="dream-panel p-5">
-                <p className="font-serif text-xl leading-9 dream-text">{bottle.body}</p>
+              <article key={bottle.id} className="dream-panel p-4 sm:p-5">
+                <p className="font-serif text-lg leading-8 dream-text sm:text-xl sm:leading-9">{bottle.body}</p>
                 <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
                   <p className="text-xs dream-muted">{formatDateTime(bottle.created_at)}</p>
-                  <div className="flex gap-2">
+                  <div className="flex w-full gap-2 sm:w-auto">
                     <button type="button" onClick={() => onModerate(bottle.id, "rejected")} className="quiet-button text-red-200 hover:text-red-100">
                       拒绝
                     </button>
@@ -3507,7 +3507,7 @@ function AdminView({
         </section>
       </article>
 
-      <aside className="dream-panel p-6">
+      <aside className="dream-panel p-5 sm:p-6">
         <p className="text-xs uppercase tracking-[0.24em] dream-muted">Moderation Rule</p>
         <h3 className="mt-3 font-serif text-3xl font-semibold">轻，但要守边界</h3>
         <p className="mt-5 text-sm leading-7 dream-muted">
@@ -3520,16 +3520,16 @@ function AdminView({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border border-[color:var(--dream-line)] bg-white/5 p-4">
+    <div className="border border-[color:var(--dream-line)] bg-white/5 p-3 sm:p-4">
       <p className="text-xs uppercase tracking-[0.2em] dream-muted">{label}</p>
-      <p className="mt-2 font-serif text-3xl font-semibold">{value}</p>
+      <p className="mt-2 font-serif text-2xl font-semibold sm:text-3xl">{value}</p>
     </div>
   );
 }
 
 function EmptyPanel({ title, text }: { title: string; text: string }) {
   return (
-    <section className="dream-panel flex min-h-80 flex-col items-center justify-center p-8 text-center">
+    <section className="dream-panel flex min-h-64 flex-col items-center justify-center p-6 text-center sm:min-h-80 sm:p-8">
       <h2 className="font-serif text-3xl font-semibold">{title}</h2>
       <p className="mt-3 max-w-md text-sm leading-7 dream-muted">{text}</p>
     </section>
