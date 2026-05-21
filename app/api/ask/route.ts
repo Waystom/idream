@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { guardApiRequest, trimText } from "@/lib/api-guard";
 import { getDeepSeekClient, getDeepSeekModel, safeJsonParse } from "@/lib/deepseek";
 import { buildQuestionPrompt } from "@/lib/prompts";
 import type { QuestionAnswer, QuestionInput } from "@/lib/types";
@@ -7,7 +8,25 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
+    const guard = await guardApiRequest(request, {
+      key: "ask",
+      limit: 12,
+      windowMs: 24 * 60 * 60 * 1000,
+      requireUser: true
+    });
+
+    if (!guard.ok) {
+      return guard.response;
+    }
+
     const body = (await request.json()) as QuestionInput;
+    body.question = trimText(body.question, 800);
+    body.previousProfile = trimText(body.previousProfile, 1800);
+    body.dreamContext = trimText(body.dreamContext, 2200);
+    body.history = (body.history || []).slice(0, 3).map((item) => ({
+      question: trimText(item.question, 800),
+      answer: trimText(item.answer, 1200)
+    }));
 
     if (!body.question || body.question.trim().length < 2) {
       return NextResponse.json({ error: "请写下你真正想问的问题。" }, { status: 400 });

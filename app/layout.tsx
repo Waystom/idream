@@ -15,7 +15,18 @@ const serif = Noto_Serif_SC({
 
 export const metadata: Metadata = {
   title: "Idream",
-  description: "一间私密的 AI 梦境咨询室"
+  description: "一间私密的 AI 梦境咨询室，用追问、解析和持续画像陪你保存梦。",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"),
+  openGraph: {
+    title: "Idream",
+    description: "一间私密的 AI 梦境咨询室，用追问、解析和持续画像陪你保存梦。",
+    type: "website",
+    locale: "zh_CN"
+  },
+  robots: {
+    index: true,
+    follow: true
+  }
 };
 
 export default function RootLayout({

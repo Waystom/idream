@@ -28,6 +28,11 @@ export type DreamRecordRow = {
     answer: string;
   }>;
   analysis: DreamAnalysis;
+  image_url: string | null;
+  image_prompt: string | null;
+  image_mime_type: string | null;
+  feedback: "hit" | "miss" | "unsure" | null;
+  feedback_note: string | null;
   inner_questions: Array<{
     question: string;
     answer: string;
@@ -35,6 +40,17 @@ export type DreamRecordRow = {
   }>;
   created_at: string;
   updated_at: string;
+};
+
+export type ProfileSnapshotRow = {
+  id: string;
+  user_id: string;
+  dream_record_id: string | null;
+  profile: string;
+  change_summary: string | null;
+  motifs: string[];
+  feedback: "hit" | "miss" | "unsure" | null;
+  created_at: string;
 };
 
 export type DriftBottleRow = {

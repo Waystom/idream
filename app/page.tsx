@@ -32,7 +32,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient, hasSupabaseBrowserEnv } from "@/lib/supabase/browser";
-import type { AdminStats, BottleStatus, DreamRecordRow, DriftBottleRow, ProfileRow, UserRole } from "@/lib/database";
+import type { AdminStats, BottleStatus, DreamRecordRow, DriftBottleRow, ProfileRow, ProfileSnapshotRow, UserRole } from "@/lib/database";
 import type { AnalystKey, DreamAnalysis, FollowupQuestions, GeneratedImage, QuestionAnswer } from "@/lib/types";
 
 type SessionUser = {
@@ -54,6 +54,7 @@ type Stage = "home" | "choose" | "consult" | "analysis" | "inner" | "archive" | 
 type ThemeMode = "dark" | "light";
 type Soundscape = "rain" | "fire" | "space" | "typewriter";
 type AuthMode = "signin" | "signup";
+type AnalysisFeedback = "hit" | "miss" | "unsure";
 
 type NavItem = {
   stage: Stage;
@@ -74,11 +75,24 @@ type DreamRecord = {
     answer: string;
   }>;
   analysis: DreamAnalysis;
+  image?: GeneratedImage | null;
+  feedback?: AnalysisFeedback | null;
+  feedbackNote?: string | null;
   qa: Array<{
     question: string;
     answer: string;
     reflection: string;
   }>;
+};
+
+type ProfileSnapshot = {
+  id: string;
+  createdAt: string;
+  dreamRecordId: string | null;
+  profile: string;
+  changeSummary: string;
+  motifs: string[];
+  feedback: AnalysisFeedback | null;
 };
 
 type StoredState = {
@@ -97,6 +111,7 @@ type StoredState = {
     reflection: string;
   }>;
   records: DreamRecord[];
+  profileSnapshots?: ProfileSnapshot[];
   activeRecordId: string | null;
 };
 
@@ -187,6 +202,8 @@ const intakeSteps: ConsultStep[] = [
 ];
 
 const storageKey = "idream.mvp.state.v3";
+const signupCooldownKey = "idream.auth.signup.cooldownUntil";
+const signupCooldownMs = 60 * 1000;
 
 const soundscapeLabels: Record<Soundscape, string> = {
   rain: "雨声",
@@ -251,8 +268,46 @@ function toDreamRecord(row: DreamRecordRow): DreamRecord {
     },
     followupAnswers: row.followup_answers || [],
     analysis: row.analysis,
+    image: row.image_url
+      ? {
+          imageUrl: row.image_url,
+          mimeType: row.image_mime_type || "image/png"
+        }
+      : null,
+    feedback: row.feedback || null,
+    feedbackNote: row.feedback_note || null,
     qa: row.inner_questions || []
   };
+}
+
+function toProfileSnapshot(row: ProfileSnapshotRow): ProfileSnapshot {
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    dreamRecordId: row.dream_record_id,
+    profile: row.profile,
+    changeSummary: row.change_summary || "",
+    motifs: row.motifs || [],
+    feedback: row.feedback || null
+  };
+}
+
+function summarizeProfileChange(analysis: DreamAnalysis) {
+  return [analysis.coreConflict, analysis.hiddenNeed, analysis.relationshipPattern]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 900);
+}
+
+function isMissingDatabaseShape(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const maybeError = error as { code?: string; message?: string };
+  const message = maybeError.message || "";
+
+  return maybeError.code === "42P01" || maybeError.code === "42703" || message.includes("profile_snapshots") || message.includes("image_url");
 }
 
 function buildSessionUser(profile: ProfileRow | null, authUser?: SupabaseUser | null): SessionUser {
@@ -263,6 +318,17 @@ function buildSessionUser(profile: ProfileRow | null, authUser?: SupabaseUser | 
     intention: profile?.intention || authUser?.user_metadata?.intention || "",
     role: profile?.role || "user"
   };
+}
+
+function getSignupCooldownUntil() {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+
+  const raw = window.localStorage.getItem(signupCooldownKey);
+  const value = raw ? Number(raw) : 0;
+
+  return Number.isFinite(value) ? value : 0;
 }
 
 function playDrawerSound(volume: number) {
@@ -514,6 +580,7 @@ export default function Home() {
   const [dreamContext, setDreamContext] = useState("");
   const [qa, setQa] = useState<StoredState["qa"]>([]);
   const [records, setRecords] = useState<DreamRecord[]>([]);
+  const [profileSnapshots, setProfileSnapshots] = useState<ProfileSnapshot[]>([]);
   const [activeRecordId, setActiveRecordId] = useState<string | null>(null);
   const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
@@ -534,9 +601,17 @@ export default function Home() {
   const [generatedImage, setGeneratedImage] = useState<GeneratedImage | null>(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [authNotice, setAuthNotice] = useState("");
+  const [signupCooldownUntil, setSignupCooldownUntil] = useState(0);
+  const [nowMs, setNowMs] = useState(Date.now());
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const storedCooldownUntil = getSignupCooldownUntil();
+
+    if (storedCooldownUntil > Date.now()) {
+      setSignupCooldownUntil(storedCooldownUntil);
+    }
+
     const raw = window.localStorage.getItem(storageKey);
     const storedTheme = window.localStorage.getItem("idream.theme");
     const nextTheme = storedTheme === "light" ? "light" : "dark";
@@ -562,6 +637,7 @@ export default function Home() {
       setDreamContext(stored.dreamContext || "");
       setQa(stored.qa || []);
       setRecords(stored.records || []);
+      setProfileSnapshots(stored.profileSnapshots || []);
       setActiveRecordId(stored.activeRecordId || null);
       setSelectedArchiveId(stored.activeRecordId || stored.records?.[0]?.id || null);
       setConsultStep(stored.followups ? Math.min(4 + stored.followups.questions.length, 8) : 0);
@@ -571,11 +647,31 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (signupCooldownUntil <= nowMs) {
+      if (signupCooldownUntil > 0 && typeof window !== "undefined") {
+        window.localStorage.removeItem(signupCooldownKey);
+        setSignupCooldownUntil(0);
+      }
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [nowMs, signupCooldownUntil]);
+
+  useEffect(() => {
     window.localStorage.setItem("idream.theme", theme);
     document.body.dataset.theme = theme;
   }, [theme]);
 
   useEffect(() => {
+    const localRecords = records.map((record) => ({
+      ...record,
+      image: record.image?.imageUrl.startsWith("data:") ? null : record.image
+    }));
     const state: StoredState = {
       user,
       selectedAnalyst,
@@ -587,12 +683,13 @@ export default function Home() {
       analysis,
       dreamContext,
       qa,
-      records,
+      records: localRecords,
+      profileSnapshots,
       activeRecordId
     };
 
     window.localStorage.setItem(storageKey, JSON.stringify(state));
-  }, [activeRecordId, analysis, dream, dreamContext, followupAnswers, followups, profile, qa, records, selectedAnalyst, stage, user]);
+  }, [activeRecordId, analysis, dream, dreamContext, followupAnswers, followups, profile, profileSnapshots, qa, records, selectedAnalyst, stage, user]);
 
   const analyst = getAnalyst(selectedAnalyst);
   const consultSteps = useMemo<ConsultStep[]>(() => {
@@ -627,6 +724,7 @@ export default function Home() {
   const selectedArchive = records.find((record) => record.id === selectedArchiveId) || records[0] || null;
   const totalQaCount = records.reduce((sum, record) => sum + record.qa.length, 0);
   const stageLabel = stageLabels[stage];
+  const signupCooldownRemainingSeconds = Math.max(0, Math.ceil((signupCooldownUntil - nowMs) / 1000));
 
   function getStepValue(step: ConsultStep) {
     if (step.kind === "followup") {
@@ -678,19 +776,57 @@ export default function Home() {
 
       const { data: dreamRows, error: dreamsError } = await supabase
         .from("dream_records")
-        .select("*")
+        .select(
+          "id,user_id,analyst_key,analyst_name,dream_at,dream_text,waking_life,mood,followup_answers,analysis,inner_questions,created_at,updated_at,image_url,image_prompt,image_mime_type,feedback,feedback_note"
+        )
         .eq("user_id", authUser.id)
         .order("created_at", { ascending: false })
         .returns<DreamRecordRow[]>();
 
       if (dreamsError) {
-        throw dreamsError;
+        if (!isMissingDatabaseShape(dreamsError)) {
+          throw dreamsError;
+        }
+
+        const { data: fallbackDreamRows, error: fallbackDreamsError } = await supabase
+          .from("dream_records")
+          .select("id,user_id,analyst_key,analyst_name,dream_at,dream_text,waking_life,mood,followup_answers,analysis,inner_questions,created_at,updated_at")
+          .eq("user_id", authUser.id)
+          .order("created_at", { ascending: false })
+          .returns<DreamRecordRow[]>();
+
+        if (fallbackDreamsError) {
+          throw fallbackDreamsError;
+        }
+
+        const nextRecords = (fallbackDreamRows || []).map(toDreamRecord);
+        setRecords(nextRecords);
+        setActiveRecordId(nextRecords[0]?.id || null);
+        setSelectedArchiveId(nextRecords[0]?.id || null);
+      } else {
+        const nextRecords = (dreamRows || []).map(toDreamRecord);
+        setRecords(nextRecords);
+        setActiveRecordId(nextRecords[0]?.id || null);
+        setSelectedArchiveId(nextRecords[0]?.id || null);
       }
 
-      const nextRecords = (dreamRows || []).map(toDreamRecord);
-      setRecords(nextRecords);
-      setActiveRecordId(nextRecords[0]?.id || null);
-      setSelectedArchiveId(nextRecords[0]?.id || null);
+      const { data: snapshotRows, error: snapshotsError } = await supabase
+        .from("profile_snapshots")
+        .select("*")
+        .eq("user_id", authUser.id)
+        .order("created_at", { ascending: false })
+        .limit(30)
+        .returns<ProfileSnapshotRow[]>();
+
+      if (snapshotsError) {
+        if (!isMissingDatabaseShape(snapshotsError)) {
+          throw snapshotsError;
+        }
+
+        setProfileSnapshots([]);
+      } else {
+        setProfileSnapshots((snapshotRows || []).map(toProfileSnapshot));
+      }
       setStage((current) => (current === "admin" && resolvedUser.role !== "admin" ? "home" : current));
       setAuthNotice("已经进入你的梦境咨询室。");
     } catch (caught) {
@@ -768,12 +904,17 @@ export default function Home() {
           throw new Error("请填写邮箱，并使用至少 6 位密码。");
         }
 
+        if (authMode === "signup" && signupCooldownRemainingSeconds > 0) {
+          throw new Error(`注册请求已发送。请先打开邮箱确认链接，${signupCooldownRemainingSeconds} 秒后可再次尝试。`);
+        }
+
         const result =
           authMode === "signup"
             ? await supabase.auth.signUp({
                 email,
                 password,
                 options: {
+                  emailRedirectTo: `${window.location.origin}/auth/confirm`,
                   data: {
                     display_name: loginName.trim() || "来访者",
                     intention: loginIntention.trim()
@@ -786,10 +927,17 @@ export default function Home() {
           throw result.error;
         }
 
+        if (authMode === "signup") {
+          const nextCooldownUntil = Date.now() + signupCooldownMs;
+          setNowMs(Date.now());
+          setSignupCooldownUntil(nextCooldownUntil);
+          window.localStorage.setItem(signupCooldownKey, String(nextCooldownUntil));
+        }
+
         const authUser = result.data.session?.user || (authMode === "signin" ? result.data.user : null);
 
         if (!authUser) {
-          setAuthNotice("注册成功。请打开邮箱确认链接，确认后再回到这里登录。");
+          setAuthNotice("注册请求已发送。请打开邮箱确认链接；确认成功后会回到登录页。短时间内只支持提交一次注册。");
           setAuthMode("signin");
           setLoginPassword("");
           return;
@@ -827,11 +975,83 @@ export default function Home() {
 
     setUser(null);
     setRecords([]);
+    setProfileSnapshots([]);
     setProfile("");
     setAnalysis(null);
     setGeneratedImage(null);
     setQa([]);
     setStage("home");
+  }
+
+  async function exportArchive() {
+    setError("");
+
+    try {
+      if (!supabaseEnabled) {
+        const payload = {
+          exportedAt: new Date().toISOString(),
+          mode: "local",
+          user,
+          profile,
+          records,
+          profileSnapshots
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `idream-local-export-${new Date().toISOString().slice(0, 10)}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+        return;
+      }
+
+      const response = await fetch("/api/account/export");
+      const data = await response.json();
+
+      if (!response.ok || data.error) {
+        throw new Error(data.error || "导出失败。");
+      }
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `idream-export-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setAuthNotice("档案已导出为 JSON 文件。");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "导出失败。");
+    }
+  }
+
+  async function deleteCloudMemory() {
+    setError("");
+
+    if (!window.confirm("确认删除云端梦境、画像快照和漂流瓶记录吗？这个操作不能撤销。")) {
+      return;
+    }
+
+    try {
+      if (supabaseEnabled) {
+        const response = await fetch("/api/account/delete", {
+          method: "POST"
+        });
+        const data = (await response.json()) as { ok?: true; error?: string };
+
+        if (!response.ok || data.error) {
+          throw new Error(data.error || "删除失败。");
+        }
+      }
+
+      clearMemory();
+      setRecords([]);
+      setProfileSnapshots([]);
+      setAuthNotice(supabaseEnabled ? "云端记忆已清空，账户仍保留。" : "本地记忆已清空。");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "删除失败。");
+    }
   }
 
   async function syncProfile({
@@ -867,29 +1087,115 @@ export default function Home() {
       return record.id;
     }
 
+    const persistedImage = record.image?.imageUrl.startsWith("data:") ? null : record.image;
     const supabase = getSupabaseBrowserClient();
+    const payload = {
+      user_id: user.id,
+      analyst_key: record.analystKey,
+      analyst_name: record.analystName,
+      dream_at: record.dream.dreamAt,
+      dream_text: record.dream.dreamText,
+      waking_life: record.dream.wakingLife,
+      mood: record.dream.mood,
+      followup_answers: record.followupAnswers,
+      analysis: record.analysis,
+      image_url: persistedImage?.imageUrl || null,
+      image_prompt: record.analysis.imagePrompt || null,
+      image_mime_type: persistedImage?.mimeType || null,
+      feedback: record.feedback || null,
+      feedback_note: record.feedbackNote || null,
+      inner_questions: record.qa
+    };
+    const fallbackPayload = {
+      user_id: user.id,
+      analyst_key: record.analystKey,
+      analyst_name: record.analystName,
+      dream_at: record.dream.dreamAt,
+      dream_text: record.dream.dreamText,
+      waking_life: record.dream.wakingLife,
+      mood: record.dream.mood,
+      followup_answers: record.followupAnswers,
+      analysis: record.analysis,
+      inner_questions: record.qa
+    };
+
     const { data, error: insertError } = await supabase
       .from("dream_records")
-      .insert({
-        user_id: user.id,
-        analyst_key: record.analystKey,
-        analyst_name: record.analystName,
-        dream_at: record.dream.dreamAt,
-        dream_text: record.dream.dreamText,
-        waking_life: record.dream.wakingLife,
-        mood: record.dream.mood,
-        followup_answers: record.followupAnswers,
-        analysis: record.analysis,
-        inner_questions: record.qa
-      })
+      .insert(payload)
       .select("*")
       .single<DreamRecordRow>();
 
     if (insertError) {
-      throw insertError;
+      if (!isMissingDatabaseShape(insertError)) {
+        throw insertError;
+      }
+
+      const { data: fallbackData, error: fallbackInsertError } = await supabase
+        .from("dream_records")
+        .insert(fallbackPayload)
+        .select("*")
+        .single<DreamRecordRow>();
+
+      if (fallbackInsertError) {
+        throw fallbackInsertError;
+      }
+
+      return fallbackData.id;
     }
 
     return data.id;
+  }
+
+  async function saveProfileSnapshotToCloud({
+    recordId,
+    nextProfile,
+    nextAnalysis,
+    feedback
+  }: {
+    recordId: string;
+    nextProfile: string;
+    nextAnalysis: DreamAnalysis;
+    feedback?: AnalysisFeedback | null;
+  }) {
+    const localSnapshot: ProfileSnapshot = {
+      id: `${Date.now()}-profile`,
+      createdAt: new Date().toISOString(),
+      dreamRecordId: recordId,
+      profile: nextProfile,
+      changeSummary: summarizeProfileChange(nextAnalysis),
+      motifs: nextAnalysis.motifs || [],
+      feedback: feedback || null
+    };
+
+    setProfileSnapshots((current) => [localSnapshot, ...current].slice(0, 30));
+
+    if (!supabaseEnabled || !user?.id) {
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const { data, error: insertError } = await supabase
+      .from("profile_snapshots")
+      .insert({
+        user_id: user.id,
+        dream_record_id: recordId,
+        profile: nextProfile,
+        change_summary: localSnapshot.changeSummary,
+        motifs: localSnapshot.motifs,
+        feedback: feedback || null
+      })
+      .select("*")
+      .single<ProfileSnapshotRow>();
+
+    if (insertError) {
+      if (isMissingDatabaseShape(insertError)) {
+        return;
+      }
+
+      throw insertError;
+    }
+
+    setProfileSnapshots((current) => current.map((item) => (item.id === localSnapshot.id ? toProfileSnapshot(data) : item)));
   }
 
   async function updateCloudRecordQa(recordId: string, nextQa: DreamRecord["qa"], nextProfile: string) {
@@ -905,6 +1211,120 @@ export default function Home() {
     }
 
     await syncProfile({ psychologicalProfile: nextProfile });
+  }
+
+  async function updateRecordExtras(recordId: string, updates: Partial<Pick<DreamRecord, "image" | "feedback" | "feedbackNote">>) {
+    setRecords((current) =>
+      current.map((record) =>
+        record.id === recordId
+          ? {
+              ...record,
+              ...updates
+            }
+          : record
+      )
+    );
+
+    if (!supabaseEnabled || !user?.id) {
+      return;
+    }
+
+    const payload: Record<string, string | null> = {};
+
+    if ("image" in updates) {
+      const persistedImage = updates.image?.imageUrl.startsWith("data:") ? null : updates.image;
+      payload.image_url = persistedImage?.imageUrl || null;
+      payload.image_mime_type = persistedImage?.mimeType || null;
+      payload.image_prompt = persistedImage ? analysis?.imagePrompt || null : null;
+    }
+
+    if ("feedback" in updates) {
+      payload.feedback = updates.feedback || null;
+    }
+
+    if ("feedbackNote" in updates) {
+      payload.feedback_note = updates.feedbackNote || null;
+    }
+
+    if (Object.keys(payload).length === 0) {
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const { error: updateError } = await supabase
+      .from("dream_records")
+      .update(payload)
+      .eq("id", recordId);
+
+    if (updateError) {
+      if (isMissingDatabaseShape(updateError)) {
+        return;
+      }
+
+      throw updateError;
+    }
+  }
+
+  async function updateLatestProfileSnapshotFeedback(recordId: string, value: AnalysisFeedback) {
+    setProfileSnapshots((current) => current.map((item) => (item.dreamRecordId === recordId ? { ...item, feedback: value } : item)));
+
+    if (!supabaseEnabled || !user?.id) {
+      return;
+    }
+
+    const supabase = getSupabaseBrowserClient();
+    const { data: snapshot, error: selectError } = await supabase
+      .from("profile_snapshots")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("dream_record_id", recordId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ id: string }>();
+
+    if (selectError) {
+      if (isMissingDatabaseShape(selectError)) {
+        return;
+      }
+
+      throw selectError;
+    }
+
+    if (!snapshot?.id) {
+      return;
+    }
+
+    const { error: updateError } = await supabase
+      .from("profile_snapshots")
+      .update({
+        feedback: value
+      })
+      .eq("id", snapshot.id);
+
+    if (updateError) {
+      if (isMissingDatabaseShape(updateError)) {
+        return;
+      }
+
+      throw updateError;
+    }
+  }
+
+  async function submitAnalysisFeedback(value: AnalysisFeedback) {
+    if (!activeRecordId || !analysis) {
+      return;
+    }
+
+    try {
+      await updateRecordExtras(activeRecordId, {
+        feedback: value,
+        feedbackNote: value === "hit" ? "用户觉得这次分析说中了。" : value === "miss" ? "用户觉得这次分析没有说中。" : "用户暂时不确定这次分析。"
+      });
+      await updateLatestProfileSnapshotFeedback(activeRecordId, value);
+      setAuthNotice(value === "hit" ? "已记录：这次分析说中了。" : value === "miss" ? "已记录：这次分析没有说中。" : "已记录：你暂时不确定。");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "记录反馈失败。");
+    }
   }
 
   async function loadAdminDashboard() {
@@ -1043,6 +1463,12 @@ export default function Home() {
       }
 
       setGeneratedImage(data);
+      if (activeRecordId) {
+        await updateRecordExtras(activeRecordId, {
+          image: data
+        });
+      }
+      setAuthNotice(data.imageUrl.startsWith("data:") ? "图片已生成。当前未转存到对象存储，刷新后可能只保存在本机缓存里。" : "图片已生成，并已保存到这条梦境档案。");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "生成图片失败。");
     } finally {
@@ -1254,6 +1680,11 @@ export default function Home() {
       if (supabaseEnabled) {
         await syncProfile({ psychologicalProfile: data.updatedProfile });
       }
+      await saveProfileSnapshotToCloud({
+        recordId,
+        nextProfile: data.updatedProfile,
+        nextAnalysis: data
+      });
       setDreamContext(
         [
           `咨询师：${analyst?.name || data.readings[0]?.name || "未选择"}`,
@@ -1359,6 +1790,7 @@ export default function Home() {
         loginName={loginName}
         loginIntention={loginIntention}
         isAuthenticating={isAuthenticating}
+        signupCooldownSeconds={signupCooldownRemainingSeconds}
         error={error}
         notice={authNotice}
         setTheme={setTheme}
@@ -1425,6 +1857,13 @@ export default function Home() {
             </div>
           ) : null}
 
+          {!error && authNotice ? (
+            <div className="dream-panel mb-5 flex items-start gap-3 px-4 py-3 text-sm leading-6 dream-text">
+              <LockKeyhole className="mt-0.5 shrink-0 text-[color:var(--dream-glow)]" size={18} />
+              <span>{authNotice}</span>
+            </div>
+          ) : null}
+
           {stage === "home" ? (
             <HomeView
               user={user}
@@ -1468,9 +1907,11 @@ export default function Home() {
               profile={profile}
               generatedImage={generatedImage}
               isGeneratingImage={isGeneratingImage}
+              activeFeedback={records.find((record) => record.id === activeRecordId)?.feedback || null}
               onInner={() => setStage("inner")}
               onLetter={() => setStage("letter")}
               onGenerateImage={generateAnalysisImage}
+              onFeedback={submitAnalysisFeedback}
             />
           ) : null}
 
@@ -1506,7 +1947,7 @@ export default function Home() {
           ) : null}
 
           {stage === "profile" ? (
-            <ProfileView profile={profile} records={records} motifs={motifs} />
+            <ProfileView profile={profile} records={records} motifs={motifs} snapshots={profileSnapshots} />
           ) : null}
 
           {stage === "settings" ? (
@@ -1522,7 +1963,9 @@ export default function Home() {
               setSoundOn={setSoundOn}
               setSoundscape={setSoundscape}
               setVolume={setVolume}
+              exportArchive={exportArchive}
               clearMemory={clearMemory}
+              deleteCloudMemory={deleteCloudMemory}
               onSignOut={signOut}
             />
           ) : null}
@@ -1565,6 +2008,7 @@ function AuthScreen({
   loginName,
   loginIntention,
   isAuthenticating,
+  signupCooldownSeconds,
   error,
   notice,
   setTheme,
@@ -1583,6 +2027,7 @@ function AuthScreen({
   loginName: string;
   loginIntention: string;
   isAuthenticating: boolean;
+  signupCooldownSeconds: number;
   error: string;
   notice: string;
   setTheme: (value: ThemeMode) => void;
@@ -1594,6 +2039,7 @@ function AuthScreen({
   enterRoom: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const isSignup = authMode === "signup";
+  const signupCoolingDown = isSignup && signupCooldownSeconds > 0;
 
   return (
     <main className="dream-shell px-5 py-5 sm:px-8">
@@ -1647,7 +2093,9 @@ function AuthScreen({
             <p className="mt-5 text-sm leading-7 dream-muted">
               {supabaseEnabled
                 ? isSignup
-                  ? "注册后，梦境档案会保存到你的私密账户。"
+                  ? signupCoolingDown
+                    ? "注册邮件已经发出。请先去邮箱确认，短时间内只支持提交一次注册。"
+                    : "注册后，梦境档案会保存到你的私密账户。"
                   : "登录后继续查看你的梦境档案和内在画像。"
                 : "当前未配置 Supabase，会以本地体验模式进入。"}
             </p>
@@ -1737,11 +2185,21 @@ function AuthScreen({
 
             <button
               type="submit"
-              disabled={isAuthenticating}
+              disabled={isAuthenticating || signupCoolingDown}
               className="mt-8 inline-flex w-full items-center justify-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-neutral-600 disabled:text-neutral-300"
             >
               {isAuthenticating ? <Hourglass className="animate-spin" size={16} /> : <ArrowRight size={16} />}
-              <span>{isAuthenticating ? "请稍候" : supabaseEnabled ? (isSignup ? "建立账户" : "进入中庭") : "进入中庭"}</span>
+              <span>
+                {isAuthenticating
+                  ? "请稍候"
+                  : signupCoolingDown
+                    ? `${signupCooldownSeconds} 秒后可再次注册`
+                    : supabaseEnabled
+                      ? isSignup
+                        ? "建立账户"
+                        : "进入中庭"
+                      : "进入中庭"}
+              </span>
             </button>
 
             <p className="mt-5 text-xs leading-6 dream-muted">
@@ -2191,18 +2649,22 @@ function AnalysisView({
   profile,
   generatedImage,
   isGeneratingImage,
+  activeFeedback,
   onInner,
   onLetter,
-  onGenerateImage
+  onGenerateImage,
+  onFeedback
 }: {
   analysis: DreamAnalysis;
   analyst: NonNullable<ReturnType<typeof getAnalyst>>;
   profile: string;
   generatedImage: GeneratedImage | null;
   isGeneratingImage: boolean;
+  activeFeedback: AnalysisFeedback | null;
   onInner: () => void;
   onLetter: () => void;
   onGenerateImage: () => void;
+  onFeedback: (value: AnalysisFeedback) => void;
 }) {
   const structuredSections = [
     { label: "我听见了什么", text: analysis.heard || analysis.opening },
@@ -2267,6 +2729,31 @@ function AnalysisView({
           <section className="dream-panel p-5">
             <p className="text-xs uppercase tracking-[0.22em] dream-muted">After Dream Ritual</p>
             <p className="mt-3 text-sm leading-7 dream-muted">{analysis.ritual}</p>
+          </section>
+
+          <section className="dream-panel p-5">
+            <p className="text-xs uppercase tracking-[0.22em] dream-muted">Reality Check</p>
+            <h2 className="mt-2 font-serif text-2xl font-semibold">这次分析贴近你吗？</h2>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              {([
+                ["hit", "说中了"],
+                ["unsure", "不确定"],
+                ["miss", "没说中"]
+              ] as Array<[AnalysisFeedback, string]>).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => onFeedback(value)}
+                  className={clsx(
+                    "quiet-button justify-center",
+                    activeFeedback === value && "border-[color:var(--dream-glow)] text-[color:var(--dream-text)]"
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-3 text-xs leading-6 dream-muted">你的反馈会影响之后怎么看待这条画像，不会被当成绝对结论。</p>
           </section>
 
           <section className="dream-panel p-5">
@@ -2587,6 +3074,27 @@ function ArchiveDetail({ record, motifs }: { record: DreamRecord; motifs: Array<
         </div>
 
         <aside className="space-y-4">
+          {record.image ? (
+            <section className="dream-panel p-5">
+              <p className="text-xs uppercase tracking-[0.22em] dream-muted">Portrait</p>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={record.image.imageUrl}
+                alt={`${record.analysis.title} 的心理画像`}
+                className="mt-4 aspect-[4/5] w-full object-cover grayscale-[15%]"
+              />
+            </section>
+          ) : null}
+
+          {record.feedback ? (
+            <section className="dream-panel p-5">
+              <p className="text-xs uppercase tracking-[0.22em] dream-muted">Reality Check</p>
+              <p className="mt-3 text-sm leading-7 dream-muted">
+                {record.feedback === "hit" ? "你标记了：这次分析说中了。" : record.feedback === "miss" ? "你标记了：这次分析没有说中。" : "你标记了：暂时不确定。"}
+              </p>
+            </section>
+          ) : null}
+
           <section className="dream-panel p-5">
             <p className="text-xs uppercase tracking-[0.22em] dream-muted">Motifs</p>
             <div className="mt-4 flex flex-wrap gap-2">
@@ -2635,11 +3143,13 @@ function MiniField({ label, text }: { label: string; text: string }) {
 function ProfileView({
   profile,
   records,
-  motifs
+  motifs,
+  snapshots
 }: {
   profile: string;
   records: DreamRecord[];
   motifs: Array<[string, number]>;
+  snapshots: ProfileSnapshot[];
 }) {
   const latest = records[0];
 
@@ -2658,6 +3168,33 @@ function ProfileView({
           <ProfileModule title="关系与行动模式" text={latest?.analysis.relationshipPattern || "多次梦境之后，这里会更清楚地呈现反复模式。"} />
           <ProfileModule title="不过度解读提醒" text={latest?.analysis.avoidOverInterpreting || "这里的内容只作为自我探索，不把梦固定成命运或诊断。"} />
         </div>
+
+        <section className="mt-12 border-t border-[color:var(--dream-line)] pt-7">
+          <p className="text-xs uppercase tracking-[0.24em] dream-muted">Profile Timeline</p>
+          <h2 className="mt-3 font-serif text-3xl font-semibold">画像怎样变化</h2>
+          <div className="mt-6 space-y-4">
+            {snapshots.length ? snapshots.slice(0, 8).map((snapshot) => (
+              <article key={snapshot.id} className="border-l border-[color:var(--dream-line)] pl-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-xs dream-muted">{formatDateTime(snapshot.createdAt)}</p>
+                  {snapshot.feedback ? (
+                    <span className="bg-white/8 px-2 py-1 text-xs dream-muted">
+                      {snapshot.feedback === "hit" ? "说中了" : snapshot.feedback === "miss" ? "没说中" : "不确定"}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-3 text-sm leading-7 dream-muted">{snapshot.changeSummary || snapshot.profile}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {snapshot.motifs.slice(0, 4).map((motif) => (
+                    <span key={motif} className="bg-white/8 px-2 py-1 text-xs dream-muted">{motif}</span>
+                  ))}
+                </div>
+              </article>
+            )) : (
+              <p className="text-sm leading-7 dream-muted">完成一次完整解析后，这里会保存每次画像的变化。</p>
+            )}
+          </div>
+        </section>
       </article>
 
       <aside className="space-y-5">
@@ -2719,7 +3256,9 @@ function SettingsView({
   setSoundOn,
   setSoundscape,
   setVolume,
+  exportArchive,
   clearMemory,
+  deleteCloudMemory,
   onSignOut
 }: {
   user: SessionUser;
@@ -2733,7 +3272,9 @@ function SettingsView({
   setSoundOn: (value: boolean) => void;
   setSoundscape: (value: Soundscape) => void;
   setVolume: (value: number) => void;
+  exportArchive: () => void;
   clearMemory: () => void;
+  deleteCloudMemory: () => void;
   onSignOut: () => void;
 }) {
   return (
@@ -2780,7 +3321,7 @@ function SettingsView({
               : "当前未配置 Supabase，来访者信息、梦境档案和持续画像只保存在这个浏览器的 localStorage 中。"}
           </p>
           <div className="mt-7 flex flex-wrap gap-3">
-            <button type="button" className="quiet-button opacity-70" disabled>
+            <button type="button" onClick={exportArchive} className="quiet-button">
               <Shield size={15} />
               导出档案
             </button>
@@ -2792,6 +3333,21 @@ function SettingsView({
               <Trash2 size={15} />
               {cloudMode ? "清空本机缓存" : "清空本地记忆"}
             </button>
+            {cloudMode ? (
+              <button type="button" onClick={deleteCloudMemory} className="quiet-button text-red-200 hover:text-red-100">
+                <CircleAlert size={15} />
+                删除云端记忆
+              </button>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="dream-panel p-7 sm:p-9">
+          <p className="text-xs uppercase tracking-[0.24em] dream-muted">Data Boundary</p>
+          <h2 className="mt-3 font-serif text-3xl font-semibold">隐私与心理边界</h2>
+          <div className="mt-5 grid gap-4 text-sm leading-7 dream-muted md:grid-cols-2">
+            <p>梦境和追问会被发送给 AI 服务生成回应；云端模式会把档案写入你的 Supabase 账户，本地模式只保存在当前浏览器。</p>
+            <p>Idream 用于自我探索，不提供医学诊断、治疗建议或危机干预。若你正处于伤害自己或他人的风险中，请联系身边可信赖的人或当地紧急服务。</p>
           </div>
         </section>
       </div>

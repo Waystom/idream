@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { guardApiRequest, trimText } from "@/lib/api-guard";
 import { getDeepSeekClient, getDeepSeekModel, safeJsonParse } from "@/lib/deepseek";
 import { buildNextFollowupPrompt } from "@/lib/prompts";
 import type { NextFollowupInput, NextFollowupQuestion } from "@/lib/types";
@@ -23,7 +24,27 @@ function validateInput(body: Partial<NextFollowupInput>) {
 
 export async function POST(request: Request) {
   try {
+    const guard = await guardApiRequest(request, {
+      key: "followup",
+      limit: 25,
+      windowMs: 24 * 60 * 60 * 1000,
+      requireUser: true
+    });
+
+    if (!guard.ok) {
+      return guard.response;
+    }
+
     const body = (await request.json()) as NextFollowupInput;
+    body.dreamText = trimText(body.dreamText, 4000);
+    body.wakingLife = trimText(body.wakingLife, 1200);
+    body.mood = trimText(body.mood, 800);
+    body.previousProfile = trimText(body.previousProfile, 1800);
+    body.previousAnswers = (body.previousAnswers || []).slice(0, 5).map((item) => ({
+      question: trimText(item.question, 160),
+      answer: trimText(item.answer, 1200)
+    }));
+
     const validationError = validateInput(body);
 
     if (validationError) {

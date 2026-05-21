@@ -41,6 +41,7 @@ DEEPSEEK_PRO_MODEL=deepseek-v4-pro
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
 Gemini 生图中转站：
@@ -50,6 +51,7 @@ GEMINI_IMAGE_API_KEY=your_transit_or_gemini_key
 GEMINI_IMAGE_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 GEMINI_IMAGE_MODEL=gemini-2.5-flash-image-preview
 GEMINI_IMAGE_AUTH_HEADER=x-goog-api-key
+SUPABASE_IMAGE_BUCKET=dream-images
 ```
 
 如果你的中转站用 OpenAI 风格 Bearer 鉴权，把 `GEMINI_IMAGE_AUTH_HEADER` 改成：
@@ -67,6 +69,19 @@ GEMINI_IMAGE_AUTH_HEADER=authorization
 3. 执行 `supabase/schema.sql`。
 4. 在 Authentication 设置里开启 Email 登录。
 5. 把 URL、anon key、service role key 填入 `.env.local` 和 Vercel Environment Variables。
+6. 在 Supabase Auth 的 Site URL / Redirect URLs 中加入：
+
+```txt
+https://your-domain.com
+https://your-domain.com/auth/confirm
+```
+
+本地开发时也加入：
+
+```txt
+http://localhost:3000
+http://localhost:3000/auth/confirm
+```
 
 ## 设置管理员
 
@@ -80,6 +95,15 @@ where email = 'your-email@example.com';
 
 管理员登录后会在左侧看到“管理”，可审核漂流瓶并查看基础统计。
 
+## 上线前检查
+
+- 生产环境使用 Node.js 20 或更高版本。
+- 执行最新的 `supabase/schema.sql`，确认 `profile_snapshots` 和 `dream_records` 新增字段已存在。
+- AI 与生图接口需要登录，并带有内存级日限流；如有高流量，需要接入 Upstash / Redis 等持久限流。
+- 设置 `NEXT_PUBLIC_SITE_URL=https://your-domain.com`，用于 OpenGraph、sitemap 和 Supabase 邮件跳转。
+- 在 Supabase Auth 中关闭不需要的登录方式，并确认邮件模板指向 `/auth/confirm`。
+- 如需长期保存生成图片，在 Supabase Storage 创建公开 bucket：`dream-images`，或用 `SUPABASE_IMAGE_BUCKET` 指定其他 bucket。若未配置或上传失败，系统会自动降级为 data URL。
+
 ## 部署
 
 推荐 Vercel：
@@ -88,7 +112,7 @@ where email = 'your-email@example.com';
 2. Vercel 导入仓库。
 3. 在 Vercel 项目设置里填写环境变量。
 4. 确认生产环境使用 Node.js 20 或更高版本。
-5. 部署完成后，在 Supabase Auth 的 Site URL / Redirect URLs 中加入你的正式域名。
+5. 部署完成后，在 Supabase Auth 的 Site URL / Redirect URLs 中加入你的正式域名和 `/auth/confirm`。
 
 ## 内容边界
 
