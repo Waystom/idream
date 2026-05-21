@@ -11,6 +11,7 @@ type ApiLimitOptions = {
   limit: number;
   windowMs: number;
   requireUser?: boolean;
+  bypassForAdmin?: boolean;
 };
 
 type GuardResult =
@@ -75,6 +76,22 @@ export async function guardApiRequest(request: Request, options: ApiLimitOptions
       ok: false,
       response: NextResponse.json({ error: "请先登录后再使用这个功能。" }, { status: 401 })
     };
+  }
+
+  if (options.bypassForAdmin && userId && hasSupabaseServerEnv()) {
+    const supabase = await getSupabaseServerClient();
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .maybeSingle<{ role: string | null }>();
+
+    if (!error && profile?.role === "admin") {
+      return {
+        ok: true,
+        userId
+      };
+    }
   }
 
   const identifier = userId || getClientIp(request);

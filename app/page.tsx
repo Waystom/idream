@@ -1894,6 +1894,7 @@ export default function Home() {
               totalSteps={consultSteps.length}
               answer={currentAnswer}
               isLoading={isGeneratingFollowups || isAnalyzing}
+              isAnalyzing={isAnalyzing}
               onAnswer={(value) => setStepValue(currentStep, value)}
               onNext={advanceConsult}
               onBack={() => setConsultStep((current) => Math.max(0, current - 1))}
@@ -2544,6 +2545,7 @@ function ConsultRoom({
   totalSteps,
   answer,
   isLoading,
+  isAnalyzing,
   onAnswer,
   onNext,
   onBack
@@ -2554,6 +2556,7 @@ function ConsultRoom({
   totalSteps: number;
   answer: string;
   isLoading: boolean;
+  isAnalyzing: boolean;
   onAnswer: (value: string) => void;
   onNext: () => void;
   onBack: () => void;
@@ -2597,6 +2600,11 @@ function ConsultRoom({
           <div className="my-6 max-w-3xl sm:my-8">
             <p className="text-sm dream-muted">{step.label}</p>
             <p className="mt-5 font-serif text-3xl leading-[1.45] dream-text sm:text-4xl">{step.prompt}</p>
+            {isAnalyzing ? (
+              <p className="mt-5 text-sm leading-7 dream-muted">
+                正在整理五个追问和梦境材料，深度解析可能需要几十秒。页面保持打开就好。
+              </p>
+            ) : null}
           </div>
 
           <div className="dream-panel p-4 sm:p-6">
@@ -2633,7 +2641,7 @@ function ConsultRoom({
                 className="inline-flex min-h-12 w-full items-center justify-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-neutral-600 disabled:text-neutral-300 sm:w-auto sm:min-w-36"
               >
                 {isLoading ? <Hourglass className="animate-spin" size={16} /> : <ArrowRight size={16} />}
-                {isLoading ? "请稍候" : buttonText}
+                {isAnalyzing ? "正在解析" : isLoading ? "请稍候" : buttonText}
               </button>
             </div>
           </div>

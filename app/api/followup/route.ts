@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { guardApiRequest, trimText } from "@/lib/api-guard";
-import { getDeepSeekClient, getDeepSeekModel, safeJsonParse } from "@/lib/deepseek";
+import { createDeepSeekChatCompletion, getDeepSeekModel, safeJsonParse } from "@/lib/deepseek";
 import { buildNextFollowupPrompt } from "@/lib/prompts";
 import type { NextFollowupInput, NextFollowupQuestion } from "@/lib/types";
 
@@ -28,7 +28,8 @@ export async function POST(request: Request) {
       key: "followup",
       limit: 25,
       windowMs: 24 * 60 * 60 * 1000,
-      requireUser: true
+      requireUser: true,
+      bypassForAdmin: true
     });
 
     if (!guard.ok) {
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
-    const completion = await getDeepSeekClient().chat.completions.create({
+    const completion = await createDeepSeekChatCompletion({
       model: getDeepSeekModel(),
       messages: [
         {
@@ -66,11 +67,12 @@ export async function POST(request: Request) {
       response_format: { type: "json_object" },
       temperature: 0.72,
       max_tokens: 700,
-      // DeepSeek V4 accepts this OpenAI-compatible extension to keep JSON output stable.
-      // @ts-expect-error DeepSeek-specific request parameter
       thinking: {
         type: "disabled"
       }
+    }, {
+      timeoutMs: 20000,
+      maxRetries: 0
     });
 
     const followup = safeJsonParse<NextFollowupQuestion>(completion.choices[0]?.message?.content);

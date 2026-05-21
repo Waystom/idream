@@ -255,7 +255,8 @@ export async function POST(request: Request) {
       key: "image",
       limit: 4,
       windowMs: 24 * 60 * 60 * 1000,
-      requireUser: true
+      requireUser: true,
+      bypassForAdmin: true
     });
 
     if (!guard.ok) {

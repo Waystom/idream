@@ -1,6 +1,18 @@
 import OpenAI from "openai";
+import type { ChatCompletion, ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 
 let client: OpenAI | null = null;
+
+export type DeepSeekChatCompletionParams = ChatCompletionCreateParamsNonStreaming & {
+  thinking?: {
+    type: "enabled" | "disabled";
+  };
+};
+
+type DeepSeekRequestOptions = {
+  timeoutMs?: number;
+  maxRetries?: number;
+};
 
 export function getDeepSeekClient() {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -25,6 +37,20 @@ export function getDeepSeekModel() {
 
 export function getDeepSeekProModel() {
   return process.env.DEEPSEEK_PRO_MODEL || "deepseek-v4-pro";
+}
+
+export function createDeepSeekChatCompletion(params: DeepSeekChatCompletionParams, options: DeepSeekRequestOptions = {}): Promise<ChatCompletion> {
+  return getDeepSeekClient().chat.completions.create(params, {
+    timeout: options.timeoutMs,
+    maxRetries: options.maxRetries ?? 0
+  });
+}
+
+export function isDeepSeekTimeoutError(error: unknown) {
+  const name = error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message : String(error);
+
+  return /timeout|timed out|abort|aborted|deadline|504|FUNCTION_INVOCATION_TIMEOUT/i.test(`${name} ${message}`);
 }
 
 export function safeJsonParse<T>(content: string | null | undefined): T {

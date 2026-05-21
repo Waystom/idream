@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { guardApiRequest, trimText } from "@/lib/api-guard";
-import { getDeepSeekClient, getDeepSeekModel, safeJsonParse } from "@/lib/deepseek";
+import { createDeepSeekChatCompletion, getDeepSeekModel, safeJsonParse } from "@/lib/deepseek";
 import { buildQuestionPrompt } from "@/lib/prompts";
 import type { QuestionAnswer, QuestionInput } from "@/lib/types";
 
@@ -12,7 +12,8 @@ export async function POST(request: Request) {
       key: "ask",
       limit: 12,
       windowMs: 24 * 60 * 60 * 1000,
-      requireUser: true
+      requireUser: true,
+      bypassForAdmin: true
     });
 
     if (!guard.ok) {
@@ -36,7 +37,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "这一轮梦境最多可以问三个问题。" }, { status: 400 });
     }
 
-    const completion = await getDeepSeekClient().chat.completions.create({
+    const completion = await createDeepSeekChatCompletion({
       model: getDeepSeekModel(),
       messages: [
         {
@@ -51,11 +52,12 @@ export async function POST(request: Request) {
       response_format: { type: "json_object" },
       temperature: 0.72,
       max_tokens: 1600,
-      // DeepSeek V4 accepts this OpenAI-compatible extension to keep JSON output stable.
-      // @ts-expect-error DeepSeek-specific request parameter
       thinking: {
         type: "disabled"
       }
+    }, {
+      timeoutMs: 26000,
+      maxRetries: 0
     });
 
     const answer = safeJsonParse<QuestionAnswer>(completion.choices[0]?.message?.content);

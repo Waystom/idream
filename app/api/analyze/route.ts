@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
 import { guardApiRequest, trimText } from "@/lib/api-guard";
-import { getDeepSeekClient, getDeepSeekProModel, safeJsonParse } from "@/lib/deepseek";
+import { createDeepSeekChatCompletion, getDeepSeekModel, getDeepSeekProModel, isDeepSeekTimeoutError, safeJsonParse } from "@/lib/deepseek";
 import { buildAnalysisPrompt } from "@/lib/prompts";
+import type { DeepSeekChatCompletionParams } from "@/lib/deepseek";
 import type { AnalysisInput, DreamAnalysis } from "@/lib/types";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
+
+const analysisTimeoutMs = Number(process.env.DEEPSEEK_ANALYSIS_TIMEOUT_MS || 42000);
+const fallbackTimeoutMs = Number(process.env.DEEPSEEK_ANALYSIS_FALLBACK_TIMEOUT_MS || 24000);
 
 function validateDreamInput(body: Partial<AnalysisInput>) {
   if (!body.dreamText || body.dreamText.trim().length < 12) {
@@ -28,7 +34,8 @@ export async function POST(request: Request) {
       key: "analyze",
       limit: 5,
       windowMs: 24 * 60 * 60 * 1000,
-      requireUser: true
+      requireUser: true,
+      bypassForAdmin: true
     });
 
     if (!guard.ok) {
@@ -36,13 +43,13 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as AnalysisInput;
-    body.dreamText = trimText(body.dreamText, 4000);
-    body.wakingLife = trimText(body.wakingLife, 1200);
-    body.mood = trimText(body.mood, 800);
-    body.previousProfile = trimText(body.previousProfile, 1800);
+    body.dreamText = trimText(body.dreamText, 2800);
+    body.wakingLife = trimText(body.wakingLife, 800);
+    body.mood = trimText(body.mood, 400);
+    body.previousProfile = trimText(body.previousProfile, 1200);
     body.followupAnswers = (body.followupAnswers || []).slice(0, 5).map((item) => ({
       question: trimText(item.question, 160),
-      answer: trimText(item.answer, 1200)
+      answer: trimText(item.answer, 800)
     }));
 
     const validationError = validateDreamInput(body);
@@ -51,27 +58,58 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
-    const completion = await getDeepSeekClient().chat.completions.create({
-      model: getDeepSeekProModel(),
+    const messages: ChatCompletionMessageParam[] = [
+      {
+        role: "system",
+        content: "你是一个中文梦境咨询产品中的结构化分析引擎。你必须只返回合法 json。"
+      },
+      {
+        role: "user",
+        content: buildAnalysisPrompt(body)
+      }
+    ];
+
+    const requestBody: Omit<DeepSeekChatCompletionParams, "model"> = {
       messages: [
-        {
-          role: "system",
-          content: "你是一个中文梦境咨询产品中的结构化分析引擎。你必须只返回合法 json。"
-        },
-        {
-          role: "user",
-          content: buildAnalysisPrompt(body)
-        }
+        ...messages
       ],
       response_format: { type: "json_object" },
       temperature: 0.7,
       max_tokens: 2600,
-      // DeepSeek V4 accepts this OpenAI-compatible extension to keep JSON output stable.
-      // @ts-expect-error DeepSeek-specific request parameter
       thinking: {
         type: "disabled"
       }
-    });
+    };
+
+    let completion;
+
+    try {
+      completion = await createDeepSeekChatCompletion(
+        {
+          model: getDeepSeekProModel(),
+          ...requestBody
+        },
+        {
+          timeoutMs: analysisTimeoutMs,
+          maxRetries: 0
+        }
+      );
+    } catch (error) {
+      if (!isDeepSeekTimeoutError(error)) {
+        throw error;
+      }
+
+      completion = await createDeepSeekChatCompletion(
+        {
+          model: getDeepSeekModel(),
+          ...requestBody
+        },
+        {
+          timeoutMs: fallbackTimeoutMs,
+          maxRetries: 0
+        }
+      );
+    }
 
     const analysis = safeJsonParse<DreamAnalysis>(completion.choices[0]?.message?.content);
 
