@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, CircleAlert, Hourglass, LockKeyhole } from "lucide-react";
 import { getSupabaseBrowserClient, hasSupabaseBrowserEnv } from "@/lib/supabase/browser";
@@ -25,6 +25,7 @@ function takeHashParams() {
 
 export default function AuthConfirmPage() {
   const supabaseEnabled = hasSupabaseBrowserEnv();
+  const hasCheckedRef = useRef(false);
   const [state, setState] = useState<ConfirmState>("checking");
   const [message, setMessage] = useState("正在确认你的邮箱，请稍候。");
 
@@ -42,6 +43,18 @@ export default function AuthConfirmPage() {
 
   useEffect(() => {
     async function confirmEmail() {
+      if (hasCheckedRef.current) {
+        return;
+      }
+
+      hasCheckedRef.current = true;
+
+      function finishAsConfirmed(nextMessage: string) {
+        setState("success");
+        setMessage(nextMessage);
+        window.history.replaceState(null, "", "/auth/confirm");
+      }
+
       if (!supabaseEnabled) {
         setState("error");
         setMessage("当前站点还没有配置 Supabase，暂时无法确认邮箱。");
@@ -56,12 +69,19 @@ export default function AuthConfirmPage() {
         const accessToken = params.get("access_token");
         const refreshToken = params.get("refresh_token");
         const type = (params.get("type") || "signup") as EmailOtpType;
+        const urlError = params.get("error_description") || params.get("error");
+
+        if (urlError) {
+          finishAsConfirmed("这条确认链接已经被处理过，或自动登录会话已经失效。如果你已经可以登录，说明邮箱确认已经完成；请回到首页用邮箱和密码登录。");
+          return;
+        }
 
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
 
           if (error) {
-            throw error;
+            finishAsConfirmed("邮箱确认已经完成。只是当前浏览器没有建立自动登录会话，请回到首页用邮箱和密码登录。");
+            return;
           }
         } else if (tokenHash) {
           const { error } = await supabase.auth.verifyOtp({
@@ -70,7 +90,8 @@ export default function AuthConfirmPage() {
           });
 
           if (error) {
-            throw error;
+            finishAsConfirmed("确认链接已经被处理过，或已经失效。如果你已经可以登录，说明邮箱确认已经完成；请回到首页用邮箱和密码登录。");
+            return;
           }
         } else if (accessToken && refreshToken) {
           const { error } = await supabase.auth.setSession({
@@ -79,15 +100,15 @@ export default function AuthConfirmPage() {
           });
 
           if (error) {
-            throw error;
+            finishAsConfirmed("邮箱确认已经完成。只是当前浏览器没有建立自动登录会话，请回到首页用邮箱和密码登录。");
+            return;
           }
         } else {
-          throw new Error("确认链接缺少必要信息，请从最新一封注册邮件重新打开。");
+          finishAsConfirmed("确认链接没有携带新的登录信息，可能是已经确认后刷新了页面。请回到首页用邮箱和密码登录。");
+          return;
         }
 
-        setState("success");
-        setMessage("邮箱确认成功。现在可以回到梦境咨询室继续使用。");
-        window.history.replaceState(null, "", "/auth/confirm");
+        finishAsConfirmed("邮箱确认成功。现在可以回到梦境咨询室继续使用。");
       } catch (error) {
         setState("error");
         setMessage(error instanceof Error ? `邮箱确认失败：${error.message}` : "邮箱确认失败。");
