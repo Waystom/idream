@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { guardApiRequest, trimText } from "@/lib/api-guard";
-import { createDeepSeekChatCompletion, getDeepSeekModel, getDeepSeekProModel, isDeepSeekTimeoutError, safeJsonParse } from "@/lib/deepseek";
+import { createDeepSeekChatCompletion, getDeepSeekModel, safeJsonParse } from "@/lib/deepseek";
 import { buildAnalysisPrompt } from "@/lib/prompts";
 import type { DeepSeekChatCompletionParams } from "@/lib/deepseek";
 import type { AnalysisInput, DreamAnalysis } from "@/lib/types";
@@ -9,7 +9,9 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const analysisTimeoutMs = Number(process.env.DEEPSEEK_ANALYSIS_TIMEOUT_MS || 42000);
+const analysisModel = process.env.DEEPSEEK_ANALYSIS_MODEL || getDeepSeekModel();
+const fallbackAnalysisModel = process.env.DEEPSEEK_ANALYSIS_FALLBACK_MODEL || getDeepSeekModel();
+const analysisTimeoutMs = Number(process.env.DEEPSEEK_ANALYSIS_TIMEOUT_MS || 22000);
 const fallbackTimeoutMs = Number(process.env.DEEPSEEK_ANALYSIS_FALLBACK_TIMEOUT_MS || 24000);
 
 function validateDreamInput(body: Partial<AnalysisInput>) {
@@ -81,37 +83,37 @@ export async function POST(request: Request) {
       }
     };
 
-    let completion;
-
-    try {
-      completion = await createDeepSeekChatCompletion(
+    async function requestAnalysis(model: string, timeoutMs: number) {
+      const startedAt = Date.now();
+      const completion = await createDeepSeekChatCompletion(
         {
-          model: getDeepSeekProModel(),
+          model,
           ...requestBody
         },
         {
-          timeoutMs: analysisTimeoutMs,
+          timeoutMs,
           maxRetries: 0
         }
       );
+      console.info(`[analyze] model=${model} durationMs=${Date.now() - startedAt}`);
+
+      return safeJsonParse<DreamAnalysis>(completion.choices[0]?.message?.content);
+    }
+
+    let analysis: DreamAnalysis;
+
+    try {
+      analysis = await requestAnalysis(analysisModel, analysisTimeoutMs);
     } catch (error) {
-      if (!isDeepSeekTimeoutError(error)) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[analyze] model=${analysisModel} failed: ${message}`);
+
+      if (fallbackAnalysisModel === analysisModel) {
         throw error;
       }
 
-      completion = await createDeepSeekChatCompletion(
-        {
-          model: getDeepSeekModel(),
-          ...requestBody
-        },
-        {
-          timeoutMs: fallbackTimeoutMs,
-          maxRetries: 0
-        }
-      );
+      analysis = await requestAnalysis(fallbackAnalysisModel, fallbackTimeoutMs);
     }
-
-    const analysis = safeJsonParse<DreamAnalysis>(completion.choices[0]?.message?.content);
 
     return NextResponse.json(analysis);
   } catch (error) {
