@@ -307,7 +307,7 @@ function isMissingDatabaseShape(error: unknown) {
   const maybeError = error as { code?: string; message?: string };
   const message = maybeError.message || "";
 
-  return maybeError.code === "42P01" || maybeError.code === "42703" || message.includes("profile_snapshots") || message.includes("image_url");
+  return maybeError.code === "42P01" || maybeError.code === "42703" || message.includes("profile_snapshots") || message.includes("image_url") || message.includes("psychological_profile");
 }
 
 function getErrorMessage(error: unknown) {
@@ -1091,6 +1091,10 @@ export default function Home() {
       .eq("id", user.id);
 
     if (updateError) {
+      if (isMissingDatabaseShape(updateError)) {
+        return;
+      }
+
       throw updateError;
     }
   }
@@ -1703,14 +1707,23 @@ export default function Home() {
       playDrawerSound(volume);
 
       void (async () => {
+        let recordId: string;
+
         try {
-          const recordId = await saveDreamRecordToCloud(localRecord);
+          recordId = await saveDreamRecordToCloud(localRecord);
           const savedRecord = { ...localRecord, id: recordId };
 
           setActiveRecordId(recordId);
           setSelectedArchiveId(recordId);
           setRecords((current) => current.map((record) => (record.id === localRecord.id ? savedRecord : record)));
+          setAuthNotice("解析已保存到云端。");
+        } catch (recordSaveError) {
+          console.error("[analysis-save] dream record failed:", recordSaveError);
+          setAuthNotice(`解析已显示，但梦境档案暂时没有保存到云端：${getErrorMessage(recordSaveError)}`);
+          return;
+        }
 
+        try {
           if (supabaseEnabled) {
             await syncProfile({ psychologicalProfile: data.updatedProfile });
           }
@@ -1720,9 +1733,9 @@ export default function Home() {
             nextProfile: data.updatedProfile,
             nextAnalysis: data
           });
-        } catch (cloudError) {
-          console.error("[analysis-save] failed:", cloudError);
-          setAuthNotice(`解析已显示，但云端保存暂时失败：${getErrorMessage(cloudError)}`);
+        } catch (extrasSaveError) {
+          console.error("[analysis-save] extras failed:", extrasSaveError);
+          setAuthNotice(`解析档案已保存，但画像同步暂时失败：${getErrorMessage(extrasSaveError)}`);
         }
       })();
     } catch (caught) {
