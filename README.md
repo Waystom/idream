@@ -58,7 +58,6 @@ GEMINI_IMAGE_AUTH_HEADER=x-goog-api-key
 GEMINI_IMAGE_API_STYLE=gemini
 GEMINI_IMAGE_SIZE=1024x1024
 GEMINI_IMAGE_RESPONSE_FORMAT=b64_json
-SUPABASE_IMAGE_BUCKET=dream-images
 ```
 
 如果你的中转站用 OpenAI 风格 Bearer 鉴权和 `/v1/images/generations`，例如 LinAPI，把配置改成：
@@ -113,7 +112,7 @@ where email = 'your-email@example.com';
 - AI 与生图接口需要登录，并带有内存级日限流；如有高流量，需要接入 Upstash / Redis 等持久限流。
 - 设置 `NEXT_PUBLIC_SITE_URL=https://your-domain.com`，用于 OpenGraph、sitemap 和 Supabase 邮件跳转。
 - 在 Supabase Auth 中关闭不需要的登录方式，并确认邮件模板指向 `/auth/confirm`。
-- 如需长期保存生成图片，在 Supabase Storage 创建公开 bucket：`dream-images`，或用 `SUPABASE_IMAGE_BUCKET` 指定其他 bucket。若未配置或上传失败，系统会自动降级为 data URL。
+- 生图是可选扩展，只在用户点击确认后触发；生成结果只临时展示，不写入云端梦境档案。
 
 ## 部署
 

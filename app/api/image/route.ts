@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { guardApiRequest, trimText } from "@/lib/api-guard";
-import { getSupabaseAdminClient, hasSupabaseServerEnv } from "@/lib/supabase/server";
 import type { GeneratedImage, ImageGenerationInput } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -149,19 +148,19 @@ function imageErrorMessage(message: string, model: string) {
 
 function buildPrompt(input: ImageGenerationInput) {
   return `
-请生成一张安静、私密、严肃的梦境心理画像照片。
+请生成一张安静、私密、严肃的梦境意象照片。
 
 风格要求：
 - 写实摄影感，不要卡通，不要赛博朋克，不要夸张奇幻。
 - 灰蓝或暖灰底色，微弱暖金色光，像夜晚咨询室里的一束灯。
 - 画面中不要出现真实名人、文字、水印、品牌标志。
-- 不要直接描绘可识别的用户长相，表达心理氛围和象征即可。
+- 不要直接描绘可识别的人脸或用户长相，表达梦境氛围和象征即可。
 - 构图高级、克制、留白充足，适合放在心理咨询产品中。
 
 梦名：
 ${input.title || "未命名的梦"}
 
-心理画像提示词：
+梦境意象提示词：
 ${input.prompt}
 `.trim();
 }
@@ -216,18 +215,6 @@ function payloadFromUrl(url: string): ImagePayload {
   };
 }
 
-function extensionForMimeType(mimeType: string) {
-  if (mimeType.includes("jpeg") || mimeType.includes("jpg")) {
-    return "jpg";
-  }
-
-  if (mimeType.includes("webp")) {
-    return "webp";
-  }
-
-  return "png";
-}
-
 function payloadToResult(payload: ImagePayload): GeneratedImage {
   if (payload.url) {
     return {
@@ -244,36 +231,6 @@ function payloadToResult(payload: ImagePayload): GeneratedImage {
     imageUrl: `data:${payload.mimeType};base64,${payload.buffer.toString("base64")}`,
     mimeType: payload.mimeType
   };
-}
-
-async function persistImage(payload: ImagePayload, userId: string | null) {
-  const bucket = process.env.SUPABASE_IMAGE_BUCKET || "dream-images";
-
-  if (!payload.buffer || !userId || !hasSupabaseServerEnv() || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    return payloadToResult(payload);
-  }
-
-  try {
-    const admin = getSupabaseAdminClient();
-    const path = `${userId}/${Date.now()}-${crypto.randomUUID()}.${extensionForMimeType(payload.mimeType)}`;
-    const { error } = await admin.storage.from(bucket).upload(path, payload.buffer, {
-      contentType: payload.mimeType,
-      upsert: false
-    });
-
-    if (error) {
-      throw error;
-    }
-
-    const { data } = admin.storage.from(bucket).getPublicUrl(path);
-
-    return {
-      imageUrl: data.publicUrl,
-      mimeType: payload.mimeType
-    } satisfies GeneratedImage;
-  } catch {
-    return payloadToResult(payload);
-  }
 }
 
 async function imagePayloadFromUrl(url: string, fallbackMimeType = "image/png"): Promise<ImagePayload> {
@@ -316,24 +273,24 @@ function firstOutputImage(data: OpenAiImageResponse) {
   return data.output?.find((item) => item.url || item.b64_json || (item.type?.includes("image") && item.result));
 }
 
-async function resultFromOpenAiImageResponse(data: OpenAiImageResponse, userId: string | null) {
+async function resultFromOpenAiImageResponse(data: OpenAiImageResponse) {
   const openAiImage = firstOpenAiImage(data);
   const outputImage = firstOutputImage(data);
 
   if (openAiImage?.url) {
-    return persistImage(await imagePayloadFromUrl(openAiImage.url), userId);
+    return payloadToResult(await imagePayloadFromUrl(openAiImage.url));
   }
 
   if (openAiImage?.b64_json) {
-    return persistImage(payloadFromBase64(openAiImage.b64_json), userId);
+    return payloadToResult(payloadFromBase64(openAiImage.b64_json));
   }
 
   if (outputImage?.url) {
-    return persistImage(await imagePayloadFromUrl(outputImage.url), userId);
+    return payloadToResult(await imagePayloadFromUrl(outputImage.url));
   }
 
   if (outputImage?.b64_json || outputImage?.result) {
-    return persistImage(payloadFromBase64(outputImage.b64_json || outputImage.result || ""), userId);
+    return payloadToResult(payloadFromBase64(outputImage.b64_json || outputImage.result || ""));
   }
 
   return null;
@@ -404,7 +361,7 @@ export async function POST(request: Request) {
       throw new Error(imageErrorMessage(data.error?.message || "生成图片失败。", model));
     }
 
-    const openAiResult = await resultFromOpenAiImageResponse(data, guard.userId);
+    const openAiResult = await resultFromOpenAiImageResponse(data);
     if (openAiResult) {
       return NextResponse.json(openAiResult);
     }
@@ -416,7 +373,7 @@ export async function POST(request: Request) {
     const mimeType = imagePart?.inlineData?.mimeType || imagePart?.inline_data?.mime_type || "image/png";
 
     if (base64) {
-      return NextResponse.json(await persistImage(payloadFromBase64(base64, mimeType), guard.userId));
+      return NextResponse.json(payloadToResult(payloadFromBase64(base64, mimeType)));
     }
 
     const filePart = parts.find((part) => part.fileData?.fileUri || part.file_data?.file_uri);
@@ -428,7 +385,7 @@ export async function POST(request: Request) {
       throw new Error(text ? `生图接口只返回了文本，没有返回图片：${text}` : "生图接口没有返回图片。请确认中转站模型支持图片生成，并使用 OpenAI 图片接口或 Gemini 图片输出。");
     }
 
-    return NextResponse.json(await persistImage(await fileUriToPayload(fileUri, fileMimeType), guard.userId));
+    return NextResponse.json(payloadToResult(await fileUriToPayload(fileUri, fileMimeType)));
   } catch (error) {
     const message = error instanceof Error ? error.message : "生成图片失败。";
 

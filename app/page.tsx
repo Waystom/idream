@@ -52,7 +52,7 @@ type DreamDraft = {
 
 type Stage = "home" | "choose" | "consult" | "analysis" | "inner" | "archive" | "profile" | "settings" | "letter" | "sea" | "admin";
 type ThemeMode = "dark" | "light";
-type Soundscape = "rain" | "fire" | "space" | "typewriter";
+type Soundscape = "warmNoise" | "deepSea" | "nightAir" | "softBreath";
 type AuthMode = "signin" | "signup";
 type AnalysisFeedback = "hit" | "miss" | "unsure";
 
@@ -206,10 +206,10 @@ const signupCooldownKey = "idream.auth.signup.cooldownUntil";
 const signupCooldownMs = 60 * 1000;
 
 const soundscapeLabels: Record<Soundscape, string> = {
-  rain: "雨声",
-  fire: "壁炉",
-  space: "深空",
-  typewriter: "打字机"
+  warmNoise: "暖白噪",
+  deepSea: "深海",
+  nightAir: "夜风",
+  softBreath: "低频呼吸"
 };
 
 const stageLabels: Record<Stage, { label: string; eyebrow: string }> = {
@@ -439,41 +439,12 @@ function AmbientSound({
     master.connect(context.destination);
     contextRef.current = context;
 
-    if (soundscape === "rain" || soundscape === "space") {
-      const source = createNoiseSource(context, soundscape === "rain" ? "highpass" : "lowpass");
-      source.output.connect(master);
-      source.source.start();
-      nodesRef.current.push(source.source, source.output);
-    }
-
-    if (soundscape === "fire") {
-      const low = createNoiseSource(context, "lowpass");
-      const high = createNoiseSource(context, "bandpass");
-      low.output.connect(master);
-      high.output.connect(master);
-      low.source.start();
-      high.source.start();
-      nodesRef.current.push(low.source, low.output, high.source, high.output);
-    }
-
-    if (soundscape === "typewriter") {
-      const interval = window.setInterval(() => {
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        oscillator.type = "square";
-        oscillator.frequency.value = 120 + Math.random() * 90;
-        gain.gain.setValueAtTime(volume * 0.045, context.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.035);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start();
-        oscillator.stop(context.currentTime + 0.04);
-      }, 520 + Math.random() * 500);
-
-      nodesRef.current.push({
-        stop: () => window.clearInterval(interval)
-      });
-    }
+    const soundNodes = createAmbientNodes(context, soundscape);
+    soundNodes.forEach((node) => {
+      node.output.connect(master);
+      node.source.start();
+      nodesRef.current.push(node.source, node.output, node);
+    });
 
     return () => {
       nodesRef.current.forEach((node) => {
@@ -493,12 +464,52 @@ function AmbientSound({
   return null;
 }
 
-function createNoiseSource(context: AudioContext, filterType: BiquadFilterType) {
+function createAmbientNodes(context: AudioContext, soundscape: Soundscape) {
+  if (soundscape === "deepSea") {
+    return [
+      createNoiseSource(context, { type: "lowpass", frequency: 190, q: 0.65, gain: 0.9, modulationDepth: 0.22, modulationRate: 0.045 }),
+      createNoiseSource(context, { type: "bandpass", frequency: 420, q: 0.55, gain: 0.22, modulationDepth: 0.16, modulationRate: 0.032 })
+    ];
+  }
+
+  if (soundscape === "nightAir") {
+    return [
+      createNoiseSource(context, { type: "highpass", frequency: 980, q: 0.45, gain: 0.38, modulationDepth: 0.2, modulationRate: 0.055 }),
+      createNoiseSource(context, { type: "bandpass", frequency: 1450, q: 0.35, gain: 0.14, modulationDepth: 0.24, modulationRate: 0.038 })
+    ];
+  }
+
+  if (soundscape === "softBreath") {
+    return [
+      createNoiseSource(context, { type: "lowpass", frequency: 260, q: 0.8, gain: 0.62, modulationDepth: 0.34, modulationRate: 0.08 }),
+      createNoiseSource(context, { type: "bandpass", frequency: 620, q: 0.5, gain: 0.16, modulationDepth: 0.2, modulationRate: 0.05 })
+    ];
+  }
+
+  return [
+    createNoiseSource(context, { type: "lowpass", frequency: 620, q: 0.55, gain: 0.5, modulationDepth: 0.08, modulationRate: 0.04 }),
+    createNoiseSource(context, { type: "highpass", frequency: 1800, q: 0.35, gain: 0.12, modulationDepth: 0.06, modulationRate: 0.03 })
+  ];
+}
+
+function createNoiseSource(
+  context: AudioContext,
+  options: {
+    type: BiquadFilterType;
+    frequency: number;
+    q: number;
+    gain: number;
+    modulationDepth: number;
+    modulationRate: number;
+  }
+) {
   const buffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
   const data = buffer.getChannelData(0);
+  let previous = 0;
 
   for (let index = 0; index < data.length; index += 1) {
-    data[index] = Math.random() * 2 - 1;
+    previous = previous * 0.72 + (Math.random() * 2 - 1) * 0.28;
+    data[index] = previous;
   }
 
   const source = context.createBufferSource();
@@ -506,15 +517,33 @@ function createNoiseSource(context: AudioContext, filterType: BiquadFilterType) 
   source.loop = true;
 
   const filter = context.createBiquadFilter();
-  filter.type = filterType;
-  filter.frequency.value = filterType === "highpass" ? 900 : filterType === "lowpass" ? 280 : 520;
-  filter.Q.value = 0.8;
+  filter.type = options.type;
+  filter.frequency.value = options.frequency;
+  filter.Q.value = options.q;
+
+  const gain = context.createGain();
+  gain.gain.value = options.gain;
+
+  const lfo = context.createOscillator();
+  const lfoGain = context.createGain();
+  lfo.type = "sine";
+  lfo.frequency.value = options.modulationRate;
+  lfoGain.gain.value = options.gain * options.modulationDepth;
+  lfo.connect(lfoGain);
+  lfoGain.connect(gain.gain);
+  lfo.start();
 
   source.connect(filter);
+  filter.connect(gain);
 
   return {
     source,
-    output: filter
+    output: gain,
+    stop: () => lfo.stop(),
+    disconnect: () => {
+      lfo.disconnect();
+      lfoGain.disconnect();
+    }
   };
 }
 
@@ -607,7 +636,7 @@ export default function Home() {
   const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [soundOn, setSoundOn] = useState(false);
-  const [soundscape, setSoundscape] = useState<Soundscape>("rain");
+  const [soundscape, setSoundscape] = useState<Soundscape>("warmNoise");
   const [volume, setVolume] = useState(0.28);
   const [isGeneratingFollowups, setIsGeneratingFollowups] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -1436,6 +1465,10 @@ export default function Home() {
       return;
     }
 
+    if (!window.confirm("生成梦境意象可能需要几十秒，并会消耗一次生图额度。确定现在生成吗？")) {
+      return;
+    }
+
     setIsGeneratingImage(true);
     setError("");
 
@@ -1457,12 +1490,7 @@ export default function Home() {
       }
 
       setGeneratedImage(data);
-      if (activeRecordId) {
-        await updateRecordExtras(activeRecordId, {
-          image: data
-        });
-      }
-      setAuthNotice(data.imageUrl.startsWith("data:") ? "图片已生成。当前未转存到对象存储，刷新后可能只保存在本机缓存里。" : "图片已生成，并已保存到这条梦境档案。");
+      setAuthNotice("图片已生成，仅在当前页面临时展示，不会保存到云端档案。");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "生成图片失败。");
     } finally {
@@ -1712,7 +1740,7 @@ export default function Home() {
           });
         } catch (extrasSaveError) {
           console.error("[analysis-save] extras failed:", extrasSaveError);
-          setAuthNotice(`解析档案已保存，但画像同步暂时失败：${getErrorMessage(extrasSaveError)}`);
+          setAuthNotice(`解析档案已保存，但内在画像同步暂时失败：${getErrorMessage(extrasSaveError)}`);
         }
       })();
     } catch (caught) {
@@ -2782,15 +2810,10 @@ function AnalysisView({
           </section>
 
           <section className="dream-panel p-4 sm:p-5">
-            <p className="text-xs uppercase tracking-[0.22em] dream-muted">Image Prompt</p>
-            <p className="mt-3 text-sm leading-7 dream-muted">{analysis.imagePrompt}</p>
-          </section>
-
-          <section className="dream-panel p-4 sm:p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.22em] dream-muted">AI Portrait</p>
-                <h2 className="mt-2 font-serif text-2xl font-semibold">心理画像照片</h2>
+                <p className="text-xs uppercase tracking-[0.22em] dream-muted">Optional Image</p>
+                <h2 className="mt-2 font-serif text-2xl font-semibold">梦境意象照片</h2>
               </div>
               <button
                 type="button"
@@ -2799,18 +2822,18 @@ function AnalysisView({
                 className="quiet-button w-full justify-center disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 {isGeneratingImage ? <Hourglass className="animate-spin" size={15} /> : <Sparkles size={15} />}
-                {isGeneratingImage ? "正在生成" : generatedImage ? "重新生成" : "生成照片"}
+                {isGeneratingImage ? "正在生成" : generatedImage ? "重新生成" : "生成意象"}
               </button>
             </div>
             {generatedImage ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={generatedImage.imageUrl}
-                alt={`${analysis.title} 的心理画像`}
+                alt={`${analysis.title} 的梦境意象`}
                 className="mt-5 aspect-[4/5] w-full max-w-xl object-cover grayscale-[15%] shadow-[0_28px_90px_rgba(0,0,0,0.22)]"
               />
             ) : (
-              <p className="mt-4 text-sm leading-7 dream-muted">使用当前解析里的 imagePrompt，通过 Gemini 生图中转站生成。</p>
+              <p className="mt-4 text-sm leading-7 dream-muted">这是可选扩展。点击后会根据本次解析生成一张临时意象照片，不会自动生成，也不会保存到云端档案。</p>
             )}
           </section>
         </div>

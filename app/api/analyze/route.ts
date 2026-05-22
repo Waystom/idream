@@ -89,7 +89,7 @@ function normalizeAnalysis(input: AnalysisInput, analysis: Partial<DreamAnalysis
     motifs: analysis.motifs?.length ? analysis.motifs : ["不确定感", "靠近与回避", "需要被看见"],
     ritual: analysis.ritual || "今天找一个安静的时刻，把梦里最有重量的画面写成一句话，然后先停在那里，不急着解释。",
     letter: analysis.letter || opening,
-    imagePrompt: analysis.imagePrompt || `一张安静、克制的梦境心理画像照片，主题是${title}，低饱和、自然光、私密咨询室氛围。`,
+    imagePrompt: analysis.imagePrompt || `一张安静、克制的梦境意象照片，主题是${title}，低饱和、自然光、私密咨询室氛围。`,
     updatedProfile: analysis.updatedProfile || fallbackText,
     nextQuestions: analysis.nextQuestions?.length ? analysis.nextQuestions.slice(0, 3) : ["我最近最想回避的是什么？", "这个梦里最需要被理解的是谁？", "我可以把哪一步放轻一点？"],
     disclaimer: analysis.disclaimer || "内容用于自我探索，不替代心理治疗或医学诊断。"
