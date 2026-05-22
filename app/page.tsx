@@ -1661,10 +1661,10 @@ export default function Home() {
         })
       });
 
-      const data = (await response.json()) as DreamAnalysis | { error: string };
+      const data = (await response.json().catch(() => ({ error: "服务器返回了无法解析的响应。" }))) as DreamAnalysis | { error: string };
 
       if (!response.ok || "error" in data) {
-        throw new Error("error" in data ? data.error : "分析失败。");
+        throw new Error("error" in data ? `分析失败（${response.status}）：${data.error}` : `分析失败（${response.status}）。`);
       }
 
       const followupPayload = followups.questions.map((item, index) => ({
