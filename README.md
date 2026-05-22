@@ -55,16 +55,23 @@ GEMINI_IMAGE_API_KEY=your_transit_or_gemini_key
 GEMINI_IMAGE_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 GEMINI_IMAGE_MODEL=gemini-2.5-flash-image-preview
 GEMINI_IMAGE_AUTH_HEADER=x-goog-api-key
+GEMINI_IMAGE_API_STYLE=gemini
+GEMINI_IMAGE_SIZE=1024x1024
+GEMINI_IMAGE_RESPONSE_FORMAT=b64_json
 SUPABASE_IMAGE_BUCKET=dream-images
 ```
 
-如果你的中转站用 OpenAI 风格 Bearer 鉴权，把 `GEMINI_IMAGE_AUTH_HEADER` 改成：
+如果你的中转站用 OpenAI 风格 Bearer 鉴权和 `/v1/images/generations`，例如 LinAPI，把配置改成：
 
 ```bash
+GEMINI_IMAGE_BASE_URL=https://api.linapi.net/v1
+GEMINI_IMAGE_MODEL=gpt-image-2
 GEMINI_IMAGE_AUTH_HEADER=authorization
+GEMINI_IMAGE_API_STYLE=openai
+GEMINI_IMAGE_RESPONSE_FORMAT=b64_json
 ```
 
-如果中转站给你的地址已经包含完整的 `:generateContent` 路径，可以直接把完整地址填进 `GEMINI_IMAGE_BASE_URL`。
+如果中转站给你的地址已经包含完整路径，可以直接填 `GEMINI_IMAGE_ENDPOINT`。模型名必须是中转站明确支持图片生成的模型；普通聊天模型即使能分析文字，也不会返回图片。
 
 ## Supabase 初始化
 

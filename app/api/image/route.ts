@@ -51,19 +51,52 @@ type GeminiImageResponse = {
   };
 };
 
+type OpenAiImageResponse = {
+  data?: Array<{
+    url?: string;
+    b64_json?: string;
+    revised_prompt?: string;
+  }>;
+  images?: Array<{
+    url?: string;
+    b64_json?: string;
+  }>;
+  output?: Array<{
+    type?: string;
+    result?: string;
+    url?: string;
+    b64_json?: string;
+  }>;
+  error?: {
+    message?: string;
+  };
+};
+
 type ImagePayload = {
   buffer?: Buffer;
   mimeType: string;
   url?: string;
 };
 
+function getImageModel(isOpenAiStyle: boolean) {
+  return process.env.GEMINI_IMAGE_MODEL || (isOpenAiStyle ? "gpt-image-2" : "gemini-2.5-flash-image-preview");
+}
+
 function getImageEndpoint() {
   const baseUrl = process.env.GEMINI_IMAGE_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
   const model = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image-preview";
   const trimmedBase = baseUrl.replace(/\/$/, "");
 
+  if (process.env.GEMINI_IMAGE_ENDPOINT) {
+    return process.env.GEMINI_IMAGE_ENDPOINT;
+  }
+
   if (trimmedBase.includes(":generateContent")) {
     return trimmedBase;
+  }
+
+  if (process.env.GEMINI_IMAGE_API_STYLE === "openai" || /\/v1\/?$/.test(trimmedBase)) {
+    return `${trimmedBase}/images/generations`;
   }
 
   return `${trimmedBase}/models/${model}:generateContent`;
@@ -86,6 +119,32 @@ function getAuthHeaders(): Record<string, string> {
   return {
     "x-goog-api-key": apiKey
   };
+}
+
+async function parseImageResponse(response: Response): Promise<GeminiImageResponse | OpenAiImageResponse> {
+  const text = await response.text();
+
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text) as GeminiImageResponse | OpenAiImageResponse;
+  } catch {
+    return {
+      error: {
+        message: text.slice(0, 400) || "生图接口返回了无法解析的响应。"
+      }
+    };
+  }
+}
+
+function imageErrorMessage(message: string, model: string) {
+  if (/not supported model for image generation/i.test(message)) {
+    return `当前生图模型 ${model} 不支持图片生成。请在 Vercel 环境变量里把 GEMINI_IMAGE_MODEL 改成中转站支持 image-generation 的模型，例如 gpt-image-2。`;
+  }
+
+  return message || "生成图片失败。";
 }
 
 function buildPrompt(input: ImageGenerationInput) {
@@ -249,6 +308,37 @@ function userCanFetchRemoteImage(url: string) {
   return /^https?:\/\//.test(url);
 }
 
+function firstOpenAiImage(data: OpenAiImageResponse) {
+  return data.data?.find((item) => item.url || item.b64_json) || data.images?.find((item) => item.url || item.b64_json);
+}
+
+function firstOutputImage(data: OpenAiImageResponse) {
+  return data.output?.find((item) => item.url || item.b64_json || (item.type?.includes("image") && item.result));
+}
+
+async function resultFromOpenAiImageResponse(data: OpenAiImageResponse, userId: string | null) {
+  const openAiImage = firstOpenAiImage(data);
+  const outputImage = firstOutputImage(data);
+
+  if (openAiImage?.url) {
+    return persistImage(await imagePayloadFromUrl(openAiImage.url), userId);
+  }
+
+  if (openAiImage?.b64_json) {
+    return persistImage(payloadFromBase64(openAiImage.b64_json), userId);
+  }
+
+  if (outputImage?.url) {
+    return persistImage(await imagePayloadFromUrl(outputImage.url), userId);
+  }
+
+  if (outputImage?.b64_json || outputImage?.result) {
+    return persistImage(payloadFromBase64(outputImage.b64_json || outputImage.result || ""), userId);
+  }
+
+  return null;
+}
+
 export async function POST(request: Request) {
   try {
     const guard = await guardApiRequest(request, {
@@ -271,55 +361,56 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "缺少可用于生图的提示词。" }, { status: 400 });
     }
 
-    const response = await fetch(getImageEndpoint(), {
+    const endpoint = getImageEndpoint();
+    const prompt = buildPrompt(input);
+    const isOpenAiStyle = endpoint.includes("/images/generations");
+    const model = getImageModel(isOpenAiStyle);
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...getAuthHeaders()
       },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: buildPrompt(input)
+      body: JSON.stringify(
+        isOpenAiStyle
+          ? {
+              model,
+              prompt,
+              n: 1,
+              size: process.env.GEMINI_IMAGE_SIZE || "1024x1024",
+              response_format: process.env.GEMINI_IMAGE_RESPONSE_FORMAT || "b64_json"
+            }
+          : {
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    {
+                      text: prompt
+                    }
+                  ]
+                }
+              ],
+              generationConfig: {
+                responseModalities: ["TEXT", "IMAGE"]
               }
-            ]
-          }
-        ],
-        generationConfig: {
-          responseModalities: ["TEXT", "IMAGE"]
-        }
-      })
+            }
+      )
     });
 
-    const data = (await response.json()) as GeminiImageResponse;
+    const data = await parseImageResponse(response);
 
     if (!response.ok || data.error) {
-      throw new Error(data.error?.message || "生成图片失败。");
+      throw new Error(imageErrorMessage(data.error?.message || "生成图片失败。", model));
     }
 
-    const openAiImage = data.data?.find((item) => item.url || item.b64_json) || data.images?.find((item) => item.url || item.b64_json);
-    const outputImage = data.output?.find((item) => item.url || item.b64_json || (item.type?.includes("image") && item.result));
-
-    if (openAiImage?.url) {
-      return NextResponse.json(await persistImage(await imagePayloadFromUrl(openAiImage.url), guard.userId));
+    const openAiResult = await resultFromOpenAiImageResponse(data, guard.userId);
+    if (openAiResult) {
+      return NextResponse.json(openAiResult);
     }
 
-    if (openAiImage?.b64_json) {
-      return NextResponse.json(await persistImage(payloadFromBase64(openAiImage.b64_json), guard.userId));
-    }
-
-    if (outputImage?.url) {
-      return NextResponse.json(await persistImage(await imagePayloadFromUrl(outputImage.url), guard.userId));
-    }
-
-    if (outputImage?.b64_json || outputImage?.result) {
-      return NextResponse.json(await persistImage(payloadFromBase64(outputImage.b64_json || outputImage.result || ""), guard.userId));
-    }
-
-    const parts = data.candidates?.flatMap((candidate) => candidate.content?.parts || []) || [];
+    const geminiData = data as GeminiImageResponse;
+    const parts = geminiData.candidates?.flatMap((candidate) => candidate.content?.parts || []) || [];
     const imagePart = parts.find((part) => part.inlineData?.data || part.inline_data?.data);
     const base64 = imagePart?.inlineData?.data || imagePart?.inline_data?.data;
     const mimeType = imagePart?.inlineData?.mimeType || imagePart?.inline_data?.mime_type || "image/png";
@@ -333,7 +424,8 @@ export async function POST(request: Request) {
     const fileMimeType = filePart?.fileData?.mimeType || filePart?.file_data?.mime_type || "image/png";
 
     if (!fileUri) {
-      throw new Error("生图接口没有返回图片。请确认中转站支持 Gemini 图片输出。");
+      const text = parts.map((part) => part.text).filter(Boolean).join(" ").slice(0, 260);
+      throw new Error(text ? `生图接口只返回了文本，没有返回图片：${text}` : "生图接口没有返回图片。请确认中转站模型支持图片生成，并使用 OpenAI 图片接口或 Gemini 图片输出。");
     }
 
     return NextResponse.json(await persistImage(await fileUriToPayload(fileUri, fileMimeType), guard.userId));
