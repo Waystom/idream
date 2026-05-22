@@ -310,6 +310,19 @@ function isMissingDatabaseShape(error: unknown) {
   return maybeError.code === "42P01" || maybeError.code === "42703" || message.includes("profile_snapshots") || message.includes("image_url");
 }
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (error && typeof error === "object") {
+    const maybeError = error as { message?: string; details?: string; hint?: string; code?: string };
+    return [maybeError.message, maybeError.details, maybeError.hint, maybeError.code].filter(Boolean).join(" / ") || "未知错误";
+  }
+
+  return String(error || "未知错误");
+}
+
 function buildSessionUser(profile: ProfileRow | null, authUser?: SupabaseUser | null): SessionUser {
   return {
     id: profile?.id || authUser?.id,
@@ -1668,23 +1681,13 @@ export default function Home() {
         analysis: data,
         qa: []
       };
-      const recordId = await saveDreamRecordToCloud(localRecord);
-      const savedRecord = { ...localRecord, id: recordId };
 
       setAnalysis(data);
       setProfile(data.updatedProfile);
       setQa([]);
-      setActiveRecordId(recordId);
-      setSelectedArchiveId(recordId);
-      setRecords((current) => [savedRecord, ...current]);
-      if (supabaseEnabled) {
-        await syncProfile({ psychologicalProfile: data.updatedProfile });
-      }
-      await saveProfileSnapshotToCloud({
-        recordId,
-        nextProfile: data.updatedProfile,
-        nextAnalysis: data
-      });
+      setActiveRecordId(localRecord.id);
+      setSelectedArchiveId(localRecord.id);
+      setRecords((current) => [localRecord, ...current]);
       setDreamContext(
         [
           `咨询师：${analyst?.name || data.readings[0]?.name || "未选择"}`,
@@ -1698,6 +1701,30 @@ export default function Home() {
       );
       setStage("analysis");
       playDrawerSound(volume);
+
+      void (async () => {
+        try {
+          const recordId = await saveDreamRecordToCloud(localRecord);
+          const savedRecord = { ...localRecord, id: recordId };
+
+          setActiveRecordId(recordId);
+          setSelectedArchiveId(recordId);
+          setRecords((current) => current.map((record) => (record.id === localRecord.id ? savedRecord : record)));
+
+          if (supabaseEnabled) {
+            await syncProfile({ psychologicalProfile: data.updatedProfile });
+          }
+
+          await saveProfileSnapshotToCloud({
+            recordId,
+            nextProfile: data.updatedProfile,
+            nextAnalysis: data
+          });
+        } catch (cloudError) {
+          console.error("[analysis-save] failed:", cloudError);
+          setAuthNotice(`解析已显示，但云端保存暂时失败：${getErrorMessage(cloudError)}`);
+        }
+      })();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "分析失败。");
     } finally {
