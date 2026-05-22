@@ -49,6 +49,17 @@ function trimText(value: string | undefined, maxLength: number) {
   return (value || "").trim().slice(0, maxLength);
 }
 
+function isSchemaCacheOrColumnError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const maybeError = error as { code?: string; message?: string };
+  const message = maybeError.message || "";
+
+  return maybeError.code === "42703" || maybeError.code === "PGRST204" || message.includes("schema cache") || message.includes("Could not find the") || message.includes("column");
+}
+
 function minimalRecordPayload(userId: string, body: SaveDreamBody) {
   return {
     user_id: userId,
@@ -98,7 +109,7 @@ export async function POST(request: Request) {
     const admin = getSupabaseAdminClient();
     let insert = await admin.from("dream_records").insert(payload).select("*").single<DreamRecordRow>();
 
-    if (insert.error && (insert.error.code === "42703" || insert.error.message.includes("image_url"))) {
+    if (insert.error && isSchemaCacheOrColumnError(insert.error)) {
       insert = await admin.from("dream_records").insert(minimalRecordPayload(user.id, body)).select("*").single<DreamRecordRow>();
     }
 

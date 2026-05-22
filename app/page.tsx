@@ -307,7 +307,16 @@ function isMissingDatabaseShape(error: unknown) {
   const maybeError = error as { code?: string; message?: string };
   const message = maybeError.message || "";
 
-  return maybeError.code === "42P01" || maybeError.code === "42703" || message.includes("profile_snapshots") || message.includes("image_url") || message.includes("psychological_profile");
+  return (
+    maybeError.code === "42P01" ||
+    maybeError.code === "42703" ||
+    maybeError.code === "PGRST204" ||
+    message.includes("schema cache") ||
+    message.includes("profile_snapshots") ||
+    message.includes("image_url") ||
+    message.includes("feedback") ||
+    message.includes("psychological_profile")
+  );
 }
 
 function getErrorMessage(error: unknown) {
