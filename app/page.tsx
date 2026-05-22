@@ -1104,63 +1104,31 @@ export default function Home() {
       return record.id;
     }
 
-    const persistedImage = record.image?.imageUrl.startsWith("data:") ? null : record.image;
-    const supabase = getSupabaseBrowserClient();
-    const payload = {
-      user_id: user.id,
-      analyst_key: record.analystKey,
-      analyst_name: record.analystName,
-      dream_at: record.dream.dreamAt,
-      dream_text: record.dream.dreamText,
-      waking_life: record.dream.wakingLife,
-      mood: record.dream.mood,
-      followup_answers: record.followupAnswers,
-      analysis: record.analysis,
-      image_url: persistedImage?.imageUrl || null,
-      image_prompt: record.analysis.imagePrompt || null,
-      image_mime_type: persistedImage?.mimeType || null,
-      feedback: record.feedback || null,
-      feedback_note: record.feedbackNote || null,
-      inner_questions: record.qa
-    };
-    const fallbackPayload = {
-      user_id: user.id,
-      analyst_key: record.analystKey,
-      analyst_name: record.analystName,
-      dream_at: record.dream.dreamAt,
-      dream_text: record.dream.dreamText,
-      waking_life: record.dream.wakingLife,
-      mood: record.dream.mood,
-      followup_answers: record.followupAnswers,
-      analysis: record.analysis,
-      inner_questions: record.qa
-    };
+    const response = await fetch("/api/dreams", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        analystKey: record.analystKey,
+        analystName: record.analystName,
+        dream: record.dream,
+        followupAnswers: record.followupAnswers,
+        analysis: record.analysis,
+        image: record.image || null,
+        feedback: record.feedback || null,
+        feedbackNote: record.feedbackNote || null,
+        qa: record.qa
+      })
+    });
 
-    const { data, error: insertError } = await supabase
-      .from("dream_records")
-      .insert(payload)
-      .select("*")
-      .single<DreamRecordRow>();
+    const data = (await response.json().catch(() => ({ error: "服务器返回了无法解析的保存响应。" }))) as { record?: DreamRecordRow; error?: string };
 
-    if (insertError) {
-      if (!isMissingDatabaseShape(insertError)) {
-        throw insertError;
-      }
-
-      const { data: fallbackData, error: fallbackInsertError } = await supabase
-        .from("dream_records")
-        .insert(fallbackPayload)
-        .select("*")
-        .single<DreamRecordRow>();
-
-      if (fallbackInsertError) {
-        throw fallbackInsertError;
-      }
-
-      return fallbackData.id;
+    if (!response.ok || data.error || !data.record?.id) {
+      throw new Error(data.error || `保存失败（${response.status}）。`);
     }
 
-    return data.id;
+    return data.record.id;
   }
 
   async function saveProfileSnapshotToCloud({
