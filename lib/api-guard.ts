@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient, hasSupabaseServerEnv } from "@/lib/supabase/server";
+import { ServiceError } from "./service-errors";
 
 type LimitBucket = {
   count: number;
@@ -118,6 +119,16 @@ export async function guardApiRequest(request: Request, options: ApiLimitOptions
   };
 }
 
-export function trimText(value: string | undefined, maxLength: number) {
-  return (value || "").trim().slice(0, maxLength);
+export function trimText(value: unknown, maxLength: number) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+export function isAnalystKey(value: unknown) {
+  return value === "freud" || value === "jung" || value === "adler";
+}
+
+export async function readJsonObject<T>(request: Request): Promise<T> {
+  const value = await request.json();
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new ServiceError("请求格式不正确，请重新提交。", 400);
+  return value as T;
 }

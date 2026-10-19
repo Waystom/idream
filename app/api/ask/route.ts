@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
-import { guardApiRequest, trimText } from "@/lib/api-guard";
+import { guardApiRequest, readJsonObject, trimText } from "@/lib/api-guard";
 import { createDeepSeekChatCompletion, getDeepSeekModel, safeJsonParse } from "@/lib/deepseek";
 import { buildQuestionPrompt } from "@/lib/prompts";
+import { hasServiceKey, serviceErrorResponse } from "@/lib/service-errors";
 import type { QuestionAnswer, QuestionInput } from "@/lib/types";
 
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
 export async function POST(request: Request) {
+  if (!hasServiceKey(process.env.DEEPSEEK_API_KEY)) return NextResponse.json({ error: "梦境解析服务暂未就绪，请稍后再试。" }, { status: 503 });
   try {
     const guard = await guardApiRequest(request, {
       key: "ask",
@@ -20,13 +23,13 @@ export async function POST(request: Request) {
       return guard.response;
     }
 
-    const body = (await request.json()) as QuestionInput;
+    const body = await readJsonObject<QuestionInput>(request);
     body.question = trimText(body.question, 800);
     body.previousProfile = trimText(body.previousProfile, 1800);
     body.dreamContext = trimText(body.dreamContext, 2200);
-    body.history = (body.history || []).slice(0, 3).map((item) => ({
-      question: trimText(item.question, 800),
-      answer: trimText(item.answer, 1200)
+    body.history = (Array.isArray(body.history) ? body.history : []).slice(0, 3).map((item) => ({
+      question: trimText(item?.question, 800),
+      answer: trimText(item?.answer, 1200)
     }));
 
     if (!body.question || body.question.trim().length < 2) {
@@ -61,11 +64,10 @@ export async function POST(request: Request) {
     });
 
     const answer = safeJsonParse<QuestionAnswer>(completion.choices[0]?.message?.content);
+    if (!trimText(answer.answer, 8000)) throw new Error("Missing answer");
 
     return NextResponse.json(answer);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "回答失败，请稍后再试。";
-
-    return NextResponse.json({ error: message }, { status: 500 });
+    return serviceErrorResponse(error, "暂时无法回应这个问题，请稍后重试。");
   }
 }

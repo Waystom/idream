@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ChatCompletion, ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
+import { hasServiceKey, ServiceError } from "./service-errors";
 
 let client: OpenAI | null = null;
 
@@ -17,8 +18,8 @@ type DeepSeekRequestOptions = {
 export function getDeepSeekClient() {
   const apiKey = process.env.DEEPSEEK_API_KEY;
 
-  if (!apiKey) {
-    throw new Error("Missing DEEPSEEK_API_KEY");
+  if (!hasServiceKey(apiKey)) {
+    throw new ServiceError("梦境解析服务暂未就绪，请稍后再试。", 503);
   }
 
   if (!client) {
@@ -32,7 +33,7 @@ export function getDeepSeekClient() {
 }
 
 export function getDeepSeekModel() {
-  return process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+  return process.env.DEEPSEEK_MODEL || "deepseek-flash";
 }
 
 export function getDeepSeekProModel() {
@@ -59,7 +60,9 @@ export function safeJsonParse<T>(content: string | null | undefined): T {
   }
 
   try {
-    return JSON.parse(content) as T;
+    const value = JSON.parse(content);
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("The model did not return an object.");
+    return value as T;
   } catch {
     const match = content.match(/\{[\s\S]*\}/);
 

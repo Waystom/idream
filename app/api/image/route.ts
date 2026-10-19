@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
-import { guardApiRequest, trimText } from "@/lib/api-guard";
+import { guardApiRequest, readJsonObject, trimText } from "@/lib/api-guard";
 import type { GeneratedImage, ImageGenerationInput } from "@/lib/types";
+import { resolveImageConfig } from "@/lib/image-config";
+import { hasServiceKey, ServiceError, serviceErrorResponse } from "@/lib/service-errors";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 type GeminiPart = {
   inlineData?: {
@@ -77,36 +80,12 @@ type ImagePayload = {
   url?: string;
 };
 
-function getImageModel(isOpenAiStyle: boolean) {
-  return process.env.GEMINI_IMAGE_MODEL || (isOpenAiStyle ? "gpt-image-2" : "gemini-2.5-flash-image-preview");
-}
-
-function getImageEndpoint() {
-  const baseUrl = process.env.GEMINI_IMAGE_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
-  const model = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image-preview";
-  const trimmedBase = baseUrl.replace(/\/$/, "");
-
-  if (process.env.GEMINI_IMAGE_ENDPOINT) {
-    return process.env.GEMINI_IMAGE_ENDPOINT;
-  }
-
-  if (trimmedBase.includes(":generateContent")) {
-    return trimmedBase;
-  }
-
-  if (process.env.GEMINI_IMAGE_API_STYLE === "openai" || /\/v1\/?$/.test(trimmedBase)) {
-    return `${trimmedBase}/images/generations`;
-  }
-
-  return `${trimmedBase}/models/${model}:generateContent`;
-}
-
 function getAuthHeaders(): Record<string, string> {
   const apiKey = process.env.GEMINI_IMAGE_API_KEY;
-  const headerMode = process.env.GEMINI_IMAGE_AUTH_HEADER || "x-goog-api-key";
+  const headerMode = resolveImageConfig(process.env).authHeader;
 
   if (!apiKey) {
-    throw new Error("Missing GEMINI_IMAGE_API_KEY");
+    throw new ServiceError("梦境意象暂未开放，请稍后再试。", 503);
   }
 
   if (headerMode.toLowerCase() === "authorization") {
@@ -138,14 +117,6 @@ async function parseImageResponse(response: Response): Promise<GeminiImageRespon
   }
 }
 
-function imageErrorMessage(message: string, model: string) {
-  if (/not supported model for image generation/i.test(message)) {
-    return `当前生图模型 ${model} 不支持图片生成。请在 Vercel 环境变量里把 GEMINI_IMAGE_MODEL 改成中转站支持 image-generation 的模型，例如 gpt-image-2。`;
-  }
-
-  return message || "生成图片失败。";
-}
-
 function buildPrompt(input: ImageGenerationInput) {
   return `
 请生成一张安静、私密、严肃的梦境意象照片。
@@ -166,8 +137,10 @@ ${input.prompt}
 }
 
 async function fileUriToPayload(fileUri: string, fallbackMimeType: string): Promise<ImagePayload> {
+  const sameService = new URL(fileUri).origin === new URL(resolveImageConfig(process.env).endpoint).origin;
   const response = await fetch(fileUri, {
-    headers: getAuthHeaders()
+    headers: sameService ? getAuthHeaders() : undefined,
+    signal: AbortSignal.timeout(5000)
   });
 
   if (!response.ok) {
@@ -243,7 +216,7 @@ async function imagePayloadFromUrl(url: string, fallbackMimeType = "image/png"):
   }
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
 
     if (!response.ok) {
       return payloadFromUrl(url);
@@ -297,6 +270,7 @@ async function resultFromOpenAiImageResponse(data: OpenAiImageResponse) {
 }
 
 export async function POST(request: Request) {
+  if (!hasServiceKey(process.env.GEMINI_IMAGE_API_KEY)) return NextResponse.json({ error: "梦境意象暂未开放，请稍后再试。" }, { status: 503 });
   try {
     const guard = await guardApiRequest(request, {
       key: "image",
@@ -310,7 +284,7 @@ export async function POST(request: Request) {
       return guard.response;
     }
 
-    const input = (await request.json()) as ImageGenerationInput;
+    const input = await readJsonObject<ImageGenerationInput>(request);
     input.prompt = trimText(input.prompt, 800);
     input.title = trimText(input.title, 80);
 
@@ -318,12 +292,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "缺少可用于生图的提示词。" }, { status: 400 });
     }
 
-    const endpoint = getImageEndpoint();
+    const { endpoint, openai: isOpenAiStyle, model } = resolveImageConfig(process.env);
+    const isSeedream = model.startsWith("doubao-seedream-");
     const prompt = buildPrompt(input);
-    const isOpenAiStyle = endpoint.includes("/images/generations");
-    const model = getImageModel(isOpenAiStyle);
     const response = await fetch(endpoint, {
       method: "POST",
+      signal: AbortSignal.timeout(48000),
       headers: {
         "Content-Type": "application/json",
         ...getAuthHeaders()
@@ -333,9 +307,9 @@ export async function POST(request: Request) {
           ? {
               model,
               prompt,
-              n: 1,
-              size: process.env.GEMINI_IMAGE_SIZE || "1024x1024",
-              response_format: process.env.GEMINI_IMAGE_RESPONSE_FORMAT || "b64_json"
+              ...(isSeedream ? { stream: false, watermark: true } : { n: 1 }),
+              size: process.env.GEMINI_IMAGE_SIZE || (isSeedream ? "2K" : "1024x1024"),
+              ...(!model.startsWith("gpt-image-") ? { response_format: process.env.GEMINI_IMAGE_RESPONSE_FORMAT || (isSeedream ? "url" : "b64_json") } : {})
             }
           : {
               contents: [
@@ -358,7 +332,8 @@ export async function POST(request: Request) {
     const data = await parseImageResponse(response);
 
     if (!response.ok || data.error) {
-      throw new Error(imageErrorMessage(data.error?.message || "生成图片失败。", model));
+      console.error("[image] provider rejected request", { status: response.status, model });
+      throw new ServiceError(response.status === 429 ? "生图服务当前繁忙，请稍后重试。" : "这次意象未能生成，请稍后重试。", response.status === 429 ? 503 : 502);
     }
 
     const openAiResult = await resultFromOpenAiImageResponse(data);
@@ -381,14 +356,11 @@ export async function POST(request: Request) {
     const fileMimeType = filePart?.fileData?.mimeType || filePart?.file_data?.mime_type || "image/png";
 
     if (!fileUri) {
-      const text = parts.map((part) => part.text).filter(Boolean).join(" ").slice(0, 260);
-      throw new Error(text ? `生图接口只返回了文本，没有返回图片：${text}` : "生图接口没有返回图片。请确认中转站模型支持图片生成，并使用 OpenAI 图片接口或 Gemini 图片输出。");
+      throw new ServiceError("生图服务没有返回图片，请稍后重试。");
     }
 
     return NextResponse.json(payloadToResult(await fileUriToPayload(fileUri, fileMimeType)));
   } catch (error) {
-    const message = error instanceof Error ? error.message : "生成图片失败。";
-
-    return NextResponse.json({ error: message }, { status: 500 });
+    return serviceErrorResponse(error, "暂时无法生成梦境意象，请稍后重试。");
   }
 }

@@ -9,6 +9,7 @@ import {
   Archive,
   BookOpen,
   CircleAlert,
+  Check,
   Compass,
   Feather,
   House,
@@ -17,6 +18,10 @@ import {
   LockKeyhole,
   Mail,
   Moon,
+  Search,
+  Download,
+  Eye,
+  EyeOff,
   PenLine,
   Settings,
   Shield,
@@ -34,6 +39,7 @@ import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient, hasSupabaseBrowserEnv } from "@/lib/supabase/browser";
 import type { AdminStats, BottleStatus, DreamRecordRow, DriftBottleRow, ProfileRow, ProfileSnapshotRow, UserRole } from "@/lib/database";
 import type { AnalystKey, DreamAnalysis, FollowupQuestions, GeneratedImage, QuestionAnswer } from "@/lib/types";
+import { authErrorMessage } from "@/lib/auth-messages";
 
 type SessionUser = {
   id?: string;
@@ -53,7 +59,7 @@ type DreamDraft = {
 type Stage = "home" | "choose" | "consult" | "analysis" | "inner" | "archive" | "profile" | "settings" | "letter" | "sea" | "admin";
 type ThemeMode = "dark" | "light";
 type Soundscape = "warmNoise" | "deepSea" | "nightAir" | "softBreath";
-type AuthMode = "signin" | "signup";
+type AuthMode = "signin" | "signup" | "magiclink" | "reset" | "resend";
 type AnalysisFeedback = "hit" | "miss" | "unsure";
 
 type NavItem = {
@@ -99,6 +105,7 @@ type StoredState = {
   user: SessionUser | null;
   selectedAnalyst: AnalystKey | null;
   stage: Stage;
+  consultStep?: number;
   profile: string;
   dream: DreamDraft;
   followups: FollowupQuestions | null;
@@ -651,6 +658,7 @@ export default function Home() {
   const [isBottleLoading, setIsBottleLoading] = useState(false);
   const [generatedImage, setGeneratedImage] = useState<GeneratedImage | null>(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [imageError, setImageError] = useState("");
   const [authNotice, setAuthNotice] = useState("");
   const [signupCooldownUntil, setSignupCooldownUntil] = useState(0);
   const [nowMs, setNowMs] = useState(Date.now());
@@ -691,7 +699,7 @@ export default function Home() {
       setProfileSnapshots(stored.profileSnapshots || []);
       setActiveRecordId(stored.activeRecordId || null);
       setSelectedArchiveId(stored.activeRecordId || stored.records?.[0]?.id || null);
-      setConsultStep(stored.followups ? Math.min(4 + stored.followups.questions.length, 8) : 0);
+      setConsultStep(Number.isInteger(stored.consultStep) ? Math.max(0, Math.min(stored.consultStep!, 8)) : stored.followups ? Math.min(4 + stored.followups.questions.length, 8) : 0);
     } catch {
       window.localStorage.removeItem(storageKey);
     }
@@ -727,6 +735,7 @@ export default function Home() {
       user,
       selectedAnalyst,
       stage,
+      consultStep,
       profile,
       dream,
       followups,
@@ -740,7 +749,7 @@ export default function Home() {
     };
 
     window.localStorage.setItem(storageKey, JSON.stringify(state));
-  }, [activeRecordId, analysis, dream, dreamContext, followupAnswers, followups, profile, profileSnapshots, qa, records, selectedAnalyst, stage, user]);
+  }, [activeRecordId, analysis, consultStep, dream, dreamContext, followupAnswers, followups, profile, profileSnapshots, qa, records, selectedAnalyst, stage, user]);
 
   const analyst = getAnalyst(selectedAnalyst);
   const consultSteps = useMemo<ConsultStep[]>(() => {
@@ -898,29 +907,32 @@ export default function Home() {
 
     async function loadSession() {
       setAuthReady(false);
-      const {
-        data: { user: authUser }
-      } = await supabase.auth.getUser();
-
-      if (cancelled) {
-        return;
+      try {
+        const { data: { user: authUser }, error: sessionError } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (sessionError && sessionError.name !== "AuthSessionMissingError") throw sessionError;
+        if (authUser) await hydrateCloudUser(authUser);
+        else setUser(null);
+      } catch (caught) {
+        if (!cancelled) {
+          setUser(null);
+          setError(authErrorMessage(caught));
+        }
+      } finally {
+        if (!cancelled) setAuthReady(true);
       }
-
-      if (!authUser) {
-        setUser(null);
-        setAuthReady(true);
-        return;
-      }
-
-      await hydrateCloudUser(authUser);
-      setAuthReady(true);
     }
 
     void loadSession();
 
     const {
       data: { subscription }
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED") return;
+      if (event === "PASSWORD_RECOVERY") {
+        window.location.assign("/auth/reset-password");
+        return;
+      }
       if (!session?.user) {
         setUser(null);
         setRecords([]);
@@ -929,7 +941,8 @@ export default function Home() {
         return;
       }
 
-      void hydrateCloudUser(session.user);
+      // Run database calls after Supabase releases its auth callback lock.
+      window.setTimeout(() => { if (!cancelled) void hydrateCloudUser(session.user); }, 0);
     });
 
     return () => {
@@ -951,13 +964,29 @@ export default function Home() {
         const email = loginEmail.trim();
         const password = loginPassword;
 
-        if (!email || password.length < 6) {
-          throw new Error("请填写邮箱，并使用至少 6 位密码。");
+        if (!email) throw new Error("请填写邮箱地址。");
+
+        if (authMode !== "signin" && signupCooldownRemainingSeconds > 0) {
+          throw new Error(`邮件已发送，请 ${signupCooldownRemainingSeconds} 秒后再试。`);
         }
 
-        if (authMode === "signup" && signupCooldownRemainingSeconds > 0) {
-          throw new Error(`注册请求已发送。请先打开邮箱确认链接，${signupCooldownRemainingSeconds} 秒后可再次尝试。`);
+        const redirectTo = `${window.location.origin}/auth/confirm`;
+        if (authMode === "magiclink" || authMode === "reset" || authMode === "resend") {
+          const result = authMode === "reset"
+            ? await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${redirectTo}?next=/auth/reset-password` })
+            : authMode === "resend"
+              ? await supabase.auth.resend({ type: "signup", email, options: { emailRedirectTo: redirectTo } })
+              : await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo, shouldCreateUser: false } });
+          if (result.error) throw result.error;
+          const cooldownUntil = Date.now() + signupCooldownMs;
+          setNowMs(Date.now());
+          setSignupCooldownUntil(cooldownUntil);
+          window.localStorage.setItem(signupCooldownKey, String(cooldownUntil));
+          setAuthNotice(authMode === "reset" ? "如果这个邮箱已注册，你会收到重置密码的邮件。" : "邮件已发送，请检查收件箱和垃圾邮件，并在当前浏览器打开链接。");
+          return;
         }
+
+        if (password.length < (authMode === "signup" ? 8 : 6)) throw new Error(authMode === "signup" ? "请设置至少 8 位密码。" : "请填写密码（至少 6 位）。");
 
         const result =
           authMode === "signup"
@@ -965,7 +994,7 @@ export default function Home() {
                 email,
                 password,
                 options: {
-                  emailRedirectTo: `${window.location.origin}/auth/confirm`,
+                  emailRedirectTo: redirectTo,
                   data: {
                     display_name: loginName.trim() || "来访者",
                     intention: loginIntention.trim()
@@ -995,15 +1024,17 @@ export default function Home() {
         }
 
         await hydrateCloudUser(authUser);
-        await syncProfile({
-          displayName: loginName.trim() || "来访者",
-          intention: loginIntention.trim(),
-          psychologicalProfile: profile
-        });
+        if (authMode === "signup") {
+          await syncProfile({
+            displayName: loginName.trim() || "来访者",
+            intention: loginIntention.trim(),
+            psychologicalProfile: profile
+          });
+        }
         setAuthNotice(authMode === "signup" ? "注册成功，正在进入中庭。" : "登录成功，正在进入中庭。");
         setStage("home");
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : authMode === "signup" ? "注册失败。" : "登录失败。");
+        setError(authErrorMessage(caught));
       } finally {
         setIsAuthenticating(false);
       }
@@ -1470,11 +1501,12 @@ export default function Home() {
     }
 
     setIsGeneratingImage(true);
-    setError("");
+    setImageError("");
 
     try {
       const response = await fetch("/api/image", {
         method: "POST",
+        signal: AbortSignal.timeout(55000),
         headers: {
           "Content-Type": "application/json"
         },
@@ -1483,16 +1515,15 @@ export default function Home() {
           title: analysis.title
         })
       });
-      const data = (await response.json()) as GeneratedImage | { error: string };
+      const data = (await response.json().catch(() => ({ error: "生图服务未及时回应，请稍后重试。" }))) as GeneratedImage | { error: string };
 
       if (!response.ok || "error" in data) {
         throw new Error("error" in data ? data.error : "生成图片失败。");
       }
 
       setGeneratedImage(data);
-      setAuthNotice("图片已生成，仅在当前页面临时展示，不会保存到云端档案。");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "生成图片失败。");
+      setImageError(caught instanceof Error && /timeout|abort/i.test(caught.name) ? "生成等待超时，请稍后重试。" : caught instanceof Error ? caught.message : "生成图片失败。");
     } finally {
       setIsGeneratingImage(false);
     }
@@ -1513,6 +1544,7 @@ export default function Home() {
   }
 
   function resetDream() {
+    if (!analysis && dream.dreamText.trim() && !window.confirm("还有一个未完成的梦。开始新梦会替换当前草稿，继续吗？")) return;
     setStage("choose");
     setConsultStep(0);
     setDream(initialDream);
@@ -1523,6 +1555,20 @@ export default function Home() {
     setQa([]);
     setDreamContext("");
     setError("");
+  }
+
+  function openArchivedRecord(record: DreamRecord) {
+    setSelectedAnalyst(record.analystKey);
+    setDream(record.dream);
+    setAnalysis(record.analysis);
+    setQa(record.qa);
+    setActiveRecordId(record.id);
+    setSelectedArchiveId(record.id);
+    setGeneratedImage(record.image || null);
+    setImageError("");
+    setDreamContext(JSON.stringify({ dream: record.dream, analysis: record.analysis }));
+    setError("");
+    setStage("analysis");
   }
 
   function clearMemory() {
@@ -1566,6 +1612,11 @@ export default function Home() {
     }
 
     if (followups && currentStep.kind === "followup") {
+      if (currentStep.index < followups.questions.length - 1) {
+        setConsultStep((current) => current + 1);
+        return;
+      }
+
       const answered = followups.questions.map((item, index) => ({
         question: item,
         answer: followupAnswers[index] || ""
@@ -1721,7 +1772,7 @@ export default function Home() {
           setActiveRecordId(recordId);
           setSelectedArchiveId(recordId);
           setRecords((current) => current.map((record) => (record.id === localRecord.id ? savedRecord : record)));
-          setAuthNotice("解析已保存到云端。");
+          setAuthNotice(supabaseEnabled ? "解析已保存到云端。" : "解析已保存到本地档案。");
         } catch (recordSaveError) {
           console.error("[analysis-save] dream record failed:", recordSaveError);
           setAuthNotice(`解析已显示，但梦境档案暂时没有保存到云端：${getErrorMessage(recordSaveError)}`);
@@ -1839,7 +1890,7 @@ export default function Home() {
         error={error}
         notice={authNotice}
         setTheme={setTheme}
-        setAuthMode={setAuthMode}
+        setAuthMode={(mode) => { setAuthMode(mode); setError(""); setAuthNotice(""); setLoginPassword(""); }}
         setLoginEmail={setLoginEmail}
         setLoginPassword={setLoginPassword}
         setLoginName={setLoginName}
@@ -1851,7 +1902,7 @@ export default function Home() {
 
   return (
     <main className="dream-shell px-3 py-3 sm:px-5 sm:py-5">
-      <div className="mx-auto grid w-full max-w-[1500px] gap-4 lg:min-h-[calc(100vh-40px)] lg:grid-cols-[244px_1fr] lg:gap-5">
+      <div className="mx-auto grid w-full max-w-[1440px] gap-4 lg:min-h-[calc(100vh-40px)] lg:grid-cols-[216px_minmax(0,1fr)] lg:gap-8">
         <AppSidebar
           user={user}
           stage={stage}
@@ -1878,12 +1929,12 @@ export default function Home() {
           <header className="dream-fade mb-4 flex flex-col gap-3 border-b border-[color:var(--dream-line)] pb-4 sm:mb-5 sm:pb-5 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.28em] dream-muted">{stageLabel.eyebrow}</p>
-              <h1 className="mt-2 font-serif text-3xl font-semibold leading-tight dream-text sm:text-4xl">{stageLabel.label}</h1>
+              <h1 className="mt-2 font-serif text-2xl font-medium leading-tight dream-text sm:text-3xl">{stageLabel.label}</h1>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-sm dream-muted">
               {stage === "consult" ? (
                 <span>
-                  第 {Math.min(consultStep + 1, consultSteps.length)} / {consultSteps.length} 步
+                  第 {consultStep + 1} / {intakeSteps.length + 5} 步
                 </span>
               ) : null}
               {analysis && (stage === "analysis" || stage === "inner" || stage === "letter") ? (
@@ -1896,14 +1947,14 @@ export default function Home() {
           </header>
 
           {error ? (
-            <div className="dream-panel mb-5 flex items-start gap-3 px-4 py-3 text-sm leading-6 text-red-200">
+            <div role="alert" className="notice-error mb-5 flex items-start gap-3">
               <CircleAlert className="mt-0.5 shrink-0" size={18} />
               <span>{error}</span>
             </div>
           ) : null}
 
           {!error && authNotice ? (
-            <div className="dream-panel mb-5 flex items-start gap-3 px-4 py-3 text-sm leading-6 dream-text">
+            <div role="status" className="notice-success mb-5 flex items-start gap-3">
               <LockKeyhole className="mt-0.5 shrink-0 text-[color:var(--dream-glow)]" size={18} />
               <span>{authNotice}</span>
             </div>
@@ -1916,7 +1967,8 @@ export default function Home() {
               records={records}
               motifs={motifs}
               totalQaCount={totalQaCount}
-              onStart={() => setStage("choose")}
+              hasDraft={Boolean(selectedAnalyst && dream.dreamText.trim() && !analysis)}
+              onStart={() => setStage(selectedAnalyst && dream.dreamText.trim() && !analysis ? "consult" : "choose")}
               onArchive={() => {
                 playDrawerSound(volume);
                 setStage("archive");
@@ -1936,7 +1988,7 @@ export default function Home() {
               analyst={analyst}
               step={currentStep}
               stepIndex={consultStep}
-              totalSteps={consultSteps.length}
+              totalSteps={intakeSteps.length + 5}
               answer={currentAnswer}
               isLoading={isGeneratingFollowups || isAnalyzing}
               isAnalyzing={isAnalyzing}
@@ -1953,6 +2005,7 @@ export default function Home() {
               profile={profile}
               generatedImage={generatedImage}
               isGeneratingImage={isGeneratingImage}
+              imageError={imageError}
               activeFeedback={records.find((record) => record.id === activeRecordId)?.feedback || null}
               onInner={() => setStage("inner")}
               onLetter={() => setStage("letter")}
@@ -1984,6 +2037,8 @@ export default function Home() {
               records={records}
               motifs={motifs}
               selectedRecord={selectedArchive}
+              onOpen={openArchivedRecord}
+              onStart={resetDream}
               onSelect={(recordId) => {
                 setSelectedArchiveId(recordId);
                 setActiveRecordId(recordId);
@@ -2085,53 +2140,60 @@ function AuthScreen({
   enterRoom: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const isSignup = authMode === "signup";
-  const signupCoolingDown = isSignup && signupCooldownSeconds > 0;
+  const emailOnly = authMode === "magiclink" || authMode === "reset" || authMode === "resend";
+  const signupCoolingDown = authMode !== "signin" && signupCooldownSeconds > 0;
+  const [showPassword, setShowPassword] = useState(false);
+  const titles: Record<AuthMode, string> = { signin: "回到你的房间", signup: "留一间房给自己", magiclink: "用邮件轻轻敲门", reset: "找回你的密码", resend: "重新确认邮箱" };
 
   return (
-    <main className="dream-shell px-4 py-4 sm:px-8 sm:py-5">
-      <div className="mx-auto flex min-h-[calc(100vh-32px)] w-full max-w-7xl flex-col">
+    <main className="dream-shell auth-shell px-5 py-5 sm:px-10 sm:py-7">
+      <div className="mx-auto flex min-h-[calc(100svh-56px)] w-full max-w-6xl flex-col">
         <header className="flex items-center justify-between gap-3 border-b border-[color:var(--dream-line)] pb-4 sm:pb-5">
           <div>
             <p className="font-serif text-2xl font-semibold tracking-wide">Idream</p>
             <p className="mt-1 text-xs uppercase tracking-[0.28em] dream-muted">private dream room</p>
           </div>
           <div className="flex items-center gap-3 text-xs dream-muted">
-            <button type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="quiet-button">
-              {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-              <span className="hidden sm:inline">{theme === "dark" ? "白色模式" : "黑色模式"}</span>
+            <button type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="icon-button" aria-label={theme === "dark" ? "切换浅色模式" : "切换深色模式"} title={theme === "dark" ? "切换浅色模式" : "切换深色模式"}>
+              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
             </button>
             <span className="hidden items-center gap-2 sm:inline-flex">
               <LockKeyhole size={14} />
-              {supabaseEnabled ? "cloud memory" : "local memory"}
+              私密梦境档案
             </span>
           </div>
         </header>
 
-        <section className="grid flex-1 gap-6 py-6 sm:gap-10 sm:py-10 lg:grid-cols-[1fr_430px] lg:items-center">
-          <div className="max-w-4xl">
-            <p className="mb-6 inline-flex items-center gap-2 text-sm dream-muted">
+        <section className="auth-layout grid flex-1 gap-10 py-9 sm:gap-14 sm:py-12 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-center">
+          <div className="min-w-0 lg:pr-8">
+            <p className="mb-5 inline-flex items-center gap-2 text-sm dream-glow-text">
               <Moon size={16} />
               请把梦带进来
             </p>
-            <h1 className="max-w-4xl font-serif text-4xl font-semibold leading-[1.08] dream-text sm:text-7xl lg:text-8xl">
-              进入一间只属于你的梦境咨询室。
+            <h1 className="max-w-lg font-serif text-3xl font-medium leading-[1.5] dream-text sm:text-5xl sm:leading-[1.4]">
+              梦境咨询室
             </h1>
-            <p className="mt-5 max-w-2xl font-serif text-lg leading-8 dream-muted sm:mt-8 sm:text-2xl sm:leading-9">
-              选择一位分析者，他会先提问，再解释。你的梦境、追问、画像和信件会在安静的档案里慢慢形成线索。
+            <p className="mt-4 max-w-sm font-serif text-base leading-8 dream-muted sm:text-lg">
+              那些醒来后仍留在心里的画面，<br />值得被温柔地听见。
             </p>
-
-            <div className="mt-8 grid max-w-3xl gap-3 sm:mt-12 sm:grid-cols-3 sm:gap-4">
-              <AuthPrinciple icon={Shield} title="私密" text={supabaseEnabled ? "账号数据由权限规则隔离。" : "当前只保存在本机浏览器。"} />
-              <AuthPrinciple icon={Feather} title="缓慢" text="先被追问，再得到解析。" />
-              <AuthPrinciple icon={LibraryBig} title="持续" text="每次梦都会修正画像。" />
+            <div className="mt-9 hidden max-w-sm grid-cols-3 gap-4 sm:grid" aria-label="三位分析者">
+              {analysts.map((person) => (
+                <div key={person.key}>
+                  <div className="relative aspect-[3/4] overflow-hidden rounded-md bg-white/5">
+                    <Image src={person.portrait} alt={person.name} fill sizes="120px" className="object-cover object-top grayscale opacity-80" />
+                  </div>
+                  <p className="mt-3 text-sm dream-text">{person.name}</p>
+                  <p className="mt-1 text-[11px] dream-muted">{person.english.split(" ").at(-1)}</p>
+                </div>
+              ))}
             </div>
           </div>
 
-          <form onSubmit={enterRoom} className="dream-panel p-4 sm:p-8">
+          <form onSubmit={enterRoom} className="auth-form min-w-0 border-t border-[color:var(--dream-line)] pt-7 lg:border-l lg:border-t-0 lg:pl-9 lg:pt-0" aria-busy={isAuthenticating}>
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.24em] dream-muted">{supabaseEnabled ? "Account" : "Local Entry"}</p>
-                <h2 className="mt-3 font-serif text-3xl font-semibold sm:text-4xl">{supabaseEnabled ? (isSignup ? "建立账户" : "回到房间") : "进入"}</h2>
+                <h2 className="mt-3 font-serif text-2xl font-medium">{supabaseEnabled ? titles[authMode] : "回到你的房间"}</h2>
               </div>
               <LockKeyhole className="dream-muted" size={18} />
             </div>
@@ -2142,29 +2204,33 @@ function AuthScreen({
                   ? signupCoolingDown
                     ? "注册邮件已经发出。请先去邮箱确认，短时间内只支持提交一次注册。"
                     : "注册后，梦境档案会保存到你的私密账户。"
-                  : "登录后继续查看你的梦境档案和内在画像。"
-                : "当前未配置 Supabase，会以本地体验模式进入。"}
+                  : authMode === "magiclink" ? "我们会寄给你一封登录邮件，无需输入密码。"
+                    : authMode === "reset" ? "输入注册邮箱，接收重置密码的邮件。"
+                      : authMode === "resend" ? "重新接收注册时的邮箱确认链接。"
+                        : "你的梦与思绪，都在这里等你。"
+                : "给自己取一个称呼，从今晚的梦开始。"}
             </p>
 
             {error ? (
-              <div className="mt-5 flex items-start gap-3 border border-red-300/20 bg-red-950/20 px-4 py-3 text-sm leading-6 text-red-100">
+              <div role="alert" className="notice-error mt-5 flex items-start gap-3">
                 <CircleAlert className="mt-0.5 shrink-0" size={16} />
                 <span>{error}</span>
               </div>
             ) : null}
 
             {!error && notice ? (
-              <div className="mt-5 flex items-start gap-3 border border-[color:rgba(243,194,107,0.28)] bg-[color:rgba(243,194,107,0.08)] px-4 py-3 text-sm leading-6 dream-text">
+              <div role="status" className="notice-success mt-5 flex items-start gap-3">
                 <LockKeyhole className="mt-0.5 shrink-0 text-[color:var(--dream-glow)]" size={16} />
                 <span>{notice}</span>
               </div>
             ) : null}
 
-            {supabaseEnabled ? (
-              <div className="mt-6 grid grid-cols-2 gap-1 border border-[color:var(--dream-line)] bg-white/5 p-1 sm:mt-7">
+            {supabaseEnabled && !emailOnly ? (
+              <div className="segmented-control mt-6 grid grid-cols-2 gap-1" role="group" aria-label="账户方式">
                 <button
                   type="button"
                   onClick={() => setAuthMode("signin")}
+                  aria-pressed={!isSignup}
                   className={clsx("min-h-10 px-3 text-sm transition", !isSignup ? "bg-[color:var(--dream-glow)] text-[#0A1128]" : "dream-muted hover:text-[color:var(--dream-text)]")}
                 >
                   登录
@@ -2172,6 +2238,7 @@ function AuthScreen({
                 <button
                   type="button"
                   onClick={() => setAuthMode("signup")}
+                  aria-pressed={isSignup}
                   className={clsx("min-h-10 px-3 text-sm transition", isSignup ? "bg-[color:var(--dream-glow)] text-[#0A1128]" : "dream-muted hover:text-[color:var(--dream-text)]")}
                 >
                   注册
@@ -2181,48 +2248,57 @@ function AuthScreen({
 
             {supabaseEnabled ? (
               <div className="mt-6 space-y-4 sm:mt-7 sm:space-y-5">
-                <QuietField label="Email" htmlFor="email">
+                <QuietField label="邮箱" htmlFor="email">
                   <input
                     id="email"
                     type="email"
+                    required
+                    autoComplete="email"
+                    autoCapitalize="none"
                     value={loginEmail}
                     onChange={(event) => setLoginEmail(event.target.value)}
-                    className="mt-3 w-full bg-white/8 px-4 py-3 text-base dream-text placeholder:text-white/30"
+                    className="dream-input mt-2"
                     placeholder="you@example.com"
                   />
                 </QuietField>
 
-                <QuietField label="Password" htmlFor="password">
-                  <input
+                {!emailOnly ? <QuietField label="密码" htmlFor="password">
+                  <div className="relative mt-2"><input
                     id="password"
-                    type="password"
+                    type={showPassword ? "text" : "password"}
+                    required
+                    minLength={isSignup ? 8 : 6}
+                    autoComplete={isSignup ? "new-password" : "current-password"}
                     value={loginPassword}
                     onChange={(event) => setLoginPassword(event.target.value)}
-                    className="mt-3 w-full bg-white/8 px-4 py-3 text-base dream-text placeholder:text-white/30"
-                    placeholder="至少 6 位"
-                  />
-                </QuietField>
+                    className="dream-input pr-12"
+                    placeholder={isSignup ? "至少 8 位" : "输入你的密码"}
+                  /><button type="button" aria-label={showPassword ? "隐藏密码" : "显示密码"} title={showPassword ? "隐藏密码" : "显示密码"} className="icon-button absolute right-1 top-1" onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
+                </QuietField> : null}
               </div>
             ) : null}
 
             {(!supabaseEnabled || isSignup) ? (
               <div className="mt-6 space-y-4 sm:mt-7 sm:space-y-5">
-                <QuietField label="Name" htmlFor="name">
+                <QuietField label="你的称呼" htmlFor="name">
                   <input
                     id="name"
+                    autoComplete="nickname"
+                    maxLength={40}
                     value={loginName}
                     onChange={(event) => setLoginName(event.target.value)}
-                    className="mt-3 w-full bg-white/8 px-4 py-3 text-base dream-text placeholder:text-white/30"
+                    className="dream-input mt-2"
                     placeholder="来访者"
                   />
                 </QuietField>
 
-                <QuietField label="Intention" htmlFor="intention">
+                <QuietField label="此刻的心愿（选填）" htmlFor="intention">
                   <textarea
                     id="intention"
                     value={loginIntention}
                     onChange={(event) => setLoginIntention(event.target.value)}
-                    className="mt-3 min-h-28 w-full resize-none bg-white/8 px-4 py-3 text-base leading-7 dream-text placeholder:text-white/30"
+                    maxLength={300}
+                    className="dream-input mt-2 min-h-24 resize-y"
                     placeholder="你想从梦里靠近什么？"
                   />
                 </QuietField>
@@ -2232,14 +2308,15 @@ function AuthScreen({
             <button
               type="submit"
               disabled={isAuthenticating || signupCoolingDown}
-              className="mt-7 inline-flex min-h-12 w-full items-center justify-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-neutral-600 disabled:text-neutral-300 sm:mt-8"
+              className="primary-button mt-6 w-full"
             >
               {isAuthenticating ? <Hourglass className="animate-spin" size={16} /> : <ArrowRight size={16} />}
               <span>
                 {isAuthenticating
                   ? "请稍候"
                   : signupCoolingDown
-                    ? `${signupCooldownSeconds} 秒后可再次注册`
+                    ? `${signupCooldownSeconds} 秒后可重新发送`
+                    : emailOnly ? "发送邮件"
                     : supabaseEnabled
                       ? isSignup
                         ? "建立账户"
@@ -2248,23 +2325,20 @@ function AuthScreen({
               </span>
             </button>
 
-            <p className="mt-5 text-xs leading-6 dream-muted">
+            {supabaseEnabled ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+              {emailOnly ? <button type="button" onClick={() => setAuthMode("signin")} className="text-link inline-flex items-center gap-1"><ArrowLeft size={14} />返回密码登录</button> : <>
+                <button type="button" onClick={() => setAuthMode("magiclink")} className="text-link inline-flex items-center gap-1"><Mail size={14} />邮件链接登录</button>
+                <button type="button" onClick={() => setAuthMode(isSignup ? "resend" : "reset")} className="text-link">{isSignup ? "重发确认邮件" : "忘记密码？"}</button>
+              </>}
+            </div> : null}
+
+            <p className="mt-7 border-t border-[color:var(--dream-line)] pt-5 text-xs leading-6 dream-muted">
               内容用于自我探索，不替代心理治疗、医学诊断或危机干预。
             </p>
           </form>
         </section>
       </div>
     </main>
-  );
-}
-
-function AuthPrinciple({ icon: Icon, title, text }: { icon: LucideIcon; title: string; text: string }) {
-  return (
-    <div className="border-t border-[color:var(--dream-line)] pt-4 sm:pt-5">
-      <Icon size={17} className="dream-muted" />
-      <h3 className="mt-3 font-serif text-xl font-semibold sm:mt-4 sm:text-2xl">{title}</h3>
-      <p className="mt-2 text-sm leading-6 dream-muted">{text}</p>
-    </div>
   );
 }
 
@@ -2313,7 +2387,7 @@ function AppSidebar({
   ] satisfies NavItem[]).filter((item) => !item.adminOnly || user.role === "admin");
 
   return (
-    <aside className="dream-panel dream-fade flex flex-col gap-3 p-3 lg:sticky lg:top-5 lg:h-[calc(100vh-40px)] lg:gap-5 lg:p-4">
+    <aside className="app-sidebar dream-fade flex flex-col gap-3 pb-4 lg:sticky lg:top-5 lg:h-[calc(100vh-40px)] lg:gap-5 lg:pb-0 lg:pr-6">
       <div className="flex items-center justify-between gap-3 lg:items-start">
         <button type="button" onClick={() => onStage("home")} className="text-left">
           <p className="font-serif text-2xl font-semibold leading-none">Idream</p>
@@ -2329,18 +2403,19 @@ function AppSidebar({
         </p>
       </div>
 
-      <nav className="grid grid-cols-3 gap-1 sm:grid-cols-6 lg:grid-cols-1">
+      <nav className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible" aria-label="主导航">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const active = stage === item.stage;
+          const active = stage === item.stage || (item.stage === "choose" && ["consult", "analysis", "inner", "letter"].includes(stage));
 
           return (
             <button
               key={item.stage}
               type="button"
               onClick={() => onStage(item.stage)}
+              aria-current={active ? "page" : undefined}
               className={clsx(
-                "group flex min-h-11 items-center justify-center px-2 text-center text-xs transition sm:text-sm lg:justify-between lg:px-3 lg:text-left",
+                "group flex min-h-12 flex-1 shrink-0 basis-12 items-center justify-center px-2 text-center text-xs transition lg:min-h-11 lg:flex-none lg:basis-auto lg:justify-between lg:px-3 lg:text-left lg:text-sm",
                 active
                   ? "bg-[color:rgba(243,194,107,0.14)] text-[color:var(--dream-text)]"
                   : "text-[color:var(--dream-muted)] hover:bg-white/[0.06] hover:text-[color:var(--dream-text)]"
@@ -2359,7 +2434,7 @@ function AppSidebar({
       <button
         type="button"
         onClick={onNewDream}
-        className="mt-1 flex min-h-11 items-center justify-between bg-[color:var(--dream-glow)] px-4 text-left text-sm font-medium text-[#0A1128] transition hover:brightness-110 lg:min-h-12"
+        className="primary-button mt-1 justify-between"
       >
         <span className="flex items-center gap-2">
           <PenLine size={16} />
@@ -2406,6 +2481,7 @@ function HomeView({
   records,
   motifs,
   totalQaCount,
+  hasDraft,
   onStart,
   onArchive,
   onProfile,
@@ -2417,6 +2493,7 @@ function HomeView({
   records: DreamRecord[];
   motifs: Array<[string, number]>;
   totalQaCount: number;
+  hasDraft: boolean;
   onStart: () => void;
   onArchive: () => void;
   onProfile: () => void;
@@ -2426,23 +2503,23 @@ function HomeView({
   const latest = records[0];
 
   return (
-    <section className="dream-fade grid gap-6 xl:grid-cols-[1fr_360px]">
+    <section className="dream-fade grid gap-8 xl:grid-cols-[minmax(0,1fr)_280px]">
       <div className="space-y-6">
-        <section className="border-b border-[color:var(--dream-line)] pb-6 sm:min-h-[420px] sm:pb-8">
+        <section className="border-b border-[color:var(--dream-line)] py-3 pb-8 sm:py-7 sm:pb-10">
           <p className="inline-flex items-center gap-2 text-sm dream-muted">
             <Moon size={16} />
-            晚上好，{user.name}
+            欢迎回来，{user.name}
           </p>
-          <h2 className="mt-5 max-w-4xl font-serif text-4xl font-semibold leading-[1.1] dream-text sm:mt-8 sm:text-6xl sm:leading-[1.08]">
-            把梦带到一间更安静的房间。
+          <h2 className="mt-6 max-w-xl font-serif text-3xl font-medium leading-[1.5] dream-text sm:text-4xl sm:leading-[1.4]">
+            今晚，梦见了什么？
           </h2>
-          <p className="mt-5 max-w-2xl font-serif text-lg leading-8 dream-muted sm:mt-7 sm:text-xl sm:leading-9">
-            从一位分析者开始，先被提问，再被理解。你的梦境、追问和画像会留在本地档案里，慢慢形成一条内在线索。
+          <p className="mt-4 max-w-lg font-serif text-base leading-8 dream-muted sm:text-lg">
+            {hasDraft ? "那个还没说完的梦，仍然在这里等你。" : "不必急着解释。先让记忆停一停，写下醒来时还记得的片段。"}
           </p>
           <div className="mt-7 flex flex-wrap gap-3 sm:mt-10">
-            <button type="button" onClick={onStart} className="inline-flex items-center gap-2 bg-[color:var(--dream-glow)] px-5 py-3 text-sm font-medium text-[#0A1128] transition hover:brightness-110">
+            <button type="button" onClick={onStart} className="primary-button">
               <Feather size={16} />
-              开始一次咨询
+              {hasDraft ? "继续上次的梦" : "开始一次咨询"}
             </button>
             <button type="button" onClick={onArchive} className="quiet-button">
               <Archive size={15} />
@@ -2455,26 +2532,26 @@ function HomeView({
           <HomeAction
             icon={BookOpen}
             title="最近一梦"
-            text={latest ? `${latest.analysis.title} / ${latest.analystName}` : "完成一次解析后，这里会出现最近的梦。"}
+            text={latest ? `${latest.analysis.title} / ${latest.analystName}` : "还没有留下第一场梦。"}
             onClick={onArchive}
           />
           <HomeAction
             icon={UserRound}
             title="内在画像"
-            text={motifs.length ? `反复母题：${motifs.slice(0, 3).map(([motif]) => motif).join("、")}` : "画像会随着每次输入继续变细。"}
+            text={motifs.length ? `反复母题：${motifs.slice(0, 3).map(([motif]) => motif).join("、")}` : "你的内在线索，正在等待被听见。"}
             onClick={onProfile}
           />
           <HomeAction
             icon={Waves}
             title="夜海"
-            text="漂流瓶与温柔互访先安放在这里，等待审核机制。"
+            text="寄一封匿名的信，或拾起远方的回声。"
             onClick={onSea}
           />
         </section>
       </div>
 
       <aside className="space-y-5">
-        <section className="dream-panel p-6">
+        <section className="border-b border-[color:var(--dream-line)] pb-6 pt-3">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Quiet Status</p>
           <div className="mt-5 grid grid-cols-3 gap-2 sm:gap-3">
             <Stat label="梦" value={records.length.toString()} />
@@ -2483,9 +2560,14 @@ function HomeView({
           </div>
         </section>
 
-        <section className="dream-panel p-6">
+        <section className="py-1">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Analyst</p>
-          <h3 className="mt-3 font-serif text-2xl font-semibold">{analyst?.name || "尚未选择"}</h3>
+          <div className="mt-4 flex items-center gap-3">
+            <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full">
+              <Image src={(analyst || analysts[0]).portrait} alt={(analyst || analysts[0]).name} fill sizes="56px" className="object-cover object-top grayscale" />
+            </div>
+            <div><h3 className="font-serif text-xl font-medium">{analyst?.name || "选择一位分析者"}</h3><p className="mt-1 text-xs dream-muted">{analyst?.english || "Freud · Jung · Adler"}</p></div>
+          </div>
           <p className="mt-4 text-sm leading-7 dream-muted">
             {analyst?.note || "你可以先进入选择室，从弗洛伊德、荣格、阿德勒中选一位陪你进入这次梦。"}
           </p>
@@ -2515,9 +2597,9 @@ function HomeAction({
   onClick: () => void;
 }) {
   return (
-    <button type="button" onClick={onClick} className="group border-t border-[color:var(--dream-line)] py-4 text-left transition hover:border-[color:rgba(243,194,107,0.48)] sm:min-h-44 sm:py-5">
+    <button type="button" onClick={onClick} className="group border-t border-[color:var(--dream-line)] py-4 text-left transition hover:border-[color:var(--dream-glow)] sm:min-h-40 sm:py-5">
       <Icon size={18} className="dream-muted transition group-hover:text-[color:var(--dream-glow)]" />
-      <h3 className="mt-4 font-serif text-2xl font-semibold sm:mt-5">{title}</h3>
+      <h3 className="mt-4 font-serif text-xl font-medium sm:mt-5">{title}</h3>
       <p className="mt-3 text-sm leading-7 dream-muted">{text}</p>
     </button>
   );
@@ -2534,11 +2616,11 @@ function ChooseAnalyst({
     <section className="dream-fade py-3 sm:py-8">
       <div className="mb-7 max-w-3xl sm:mb-10">
         <p className="mb-4 text-xs uppercase tracking-[0.3em] dream-muted">Choose The Analyst</p>
-        <h1 className="font-serif text-3xl font-semibold leading-tight dream-text sm:text-5xl">
+        <h2 className="font-serif text-2xl font-medium leading-relaxed dream-text sm:text-3xl">
           选择一位与你一起进入梦的人
-        </h1>
+        </h2>
         <p className="mt-4 font-serif text-lg leading-8 dream-muted">
-          本轮梦境只由一位心理学家分析。点击或停留在画像上，房间会亮起一点。
+          三种视角，没有标准答案。此刻，你更想与谁聊聊？
         </p>
       </div>
 
@@ -2549,12 +2631,11 @@ function ChooseAnalyst({
             type="button"
             onClick={() => onChoose(analyst.key)}
             className={clsx(
-              "group relative min-h-[420px] overflow-hidden text-left transition duration-500 hover:-translate-y-1 sm:min-h-[560px]",
+              "group relative min-h-[420px] overflow-hidden text-left transition duration-300 hover:-translate-y-1 sm:min-h-[480px]",
               "dream-panel",
               selectedAnalyst === analyst.key && "shadow-[0_35px_100px_rgba(0,0,0,0.2)]"
             )}
           >
-            <div className="absolute left-1/2 top-12 z-10 h-[68%] w-[56%] -translate-x-1/2 rounded-[48%_48%_38%_38%] bg-white/0 blur-2xl transition duration-700 group-hover:bg-white/24" />
             <Image
               src={analyst.portrait}
               alt={analyst.english}
@@ -2563,7 +2644,6 @@ function ChooseAnalyst({
               className="absolute inset-0 h-full w-full object-cover object-top grayscale transition duration-700 group-hover:scale-105 group-hover:grayscale-[35%]"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-neutral-950 via-neutral-950/42 to-neutral-200/10 transition duration-500 group-hover:from-neutral-950 group-hover:via-neutral-950/25" />
-            <div className="absolute inset-x-[18%] top-[10%] h-[64%] rounded-[50%] ring-0 ring-white/0 transition duration-700 group-hover:ring-[1px] group-hover:ring-white/45" />
             <div className="absolute inset-x-0 bottom-0 p-5 text-white sm:p-6">
               <p className="text-xs uppercase tracking-[0.24em] text-white/54">{analyst.english}</p>
               <h2 className="mt-3 font-serif text-3xl font-semibold sm:text-4xl">{analyst.name}</h2>
@@ -2610,7 +2690,7 @@ function ConsultRoom({
   const buttonText =
     step.kind !== "followup" && stepIndex === intakeSteps.length - 1
       ? "让他继续追问"
-      : step.kind === "followup" && stepIndex === totalSteps - 1
+      : step.kind === "followup" && step.index === 4
         ? "进入解析"
         : "继续";
 
@@ -2618,7 +2698,6 @@ function ConsultRoom({
     <section className="dream-panel-strong dream-fade lg:min-h-[calc(100vh-120px)]">
       <div className="relative grid overflow-hidden lg:min-h-[calc(100vh-120px)] lg:grid-cols-[42%_1fr]">
         <div className="relative min-h-[260px] bg-[#0A1128]/60 sm:min-h-[340px] lg:min-h-[420px]">
-          <div className="absolute left-1/2 top-12 z-10 h-[70%] w-[56%] -translate-x-1/2 rounded-[48%_48%_38%_38%] bg-white/18 blur-2xl" />
           <Image
             src={analyst.portrait}
             alt={analyst.english}
@@ -2702,6 +2781,7 @@ function AnalysisView({
   profile,
   generatedImage,
   isGeneratingImage,
+  imageError,
   activeFeedback,
   onInner,
   onLetter,
@@ -2713,6 +2793,7 @@ function AnalysisView({
   profile: string;
   generatedImage: GeneratedImage | null;
   isGeneratingImage: boolean;
+  imageError: string;
   activeFeedback: AnalysisFeedback | null;
   onInner: () => void;
   onLetter: () => void;
@@ -2797,11 +2878,13 @@ function AnalysisView({
                   key={value}
                   type="button"
                   onClick={() => onFeedback(value)}
+                  aria-pressed={activeFeedback === value}
                   className={clsx(
                     "quiet-button justify-center",
                     activeFeedback === value && "border-[color:var(--dream-glow)] text-[color:var(--dream-text)]"
                   )}
                 >
+                  <span className="inline-flex h-4 w-4 items-center justify-center">{activeFeedback === value ? <Check size={14} /> : null}</span>
                   {label}
                 </button>
               ))}
@@ -2809,13 +2892,13 @@ function AnalysisView({
             <p className="mt-3 text-xs leading-6 dream-muted">你的反馈会影响之后怎么看待这条画像，不会被当成绝对结论。</p>
           </section>
 
-          <section className="dream-panel p-4 sm:p-5">
+          <section className="dream-panel p-4 sm:p-5" aria-label="梦境意象照片" aria-busy={isGeneratingImage}>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.22em] dream-muted">Optional Image</p>
                 <h2 className="mt-2 font-serif text-2xl font-semibold">梦境意象照片</h2>
               </div>
-              <button
+              <div className="flex shrink-0 gap-2">{generatedImage ? <a href={generatedImage.imageUrl} download={`idream-${analysis.title}.png`} className="icon-button" aria-label="下载梦境图片" title="下载梦境图片"><Download size={18} /></a> : null}<button
                 type="button"
                 onClick={onGenerateImage}
                 disabled={isGeneratingImage}
@@ -2824,16 +2907,20 @@ function AnalysisView({
                 {isGeneratingImage ? <Hourglass className="animate-spin" size={15} /> : <Sparkles size={15} />}
                 {isGeneratingImage ? "正在生成" : generatedImage ? "重新生成" : "生成意象"}
               </button>
+              </div>
             </div>
+            {imageError ? <p role="alert" className="notice-error mt-4">{imageError}</p> : null}
             {generatedImage ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={generatedImage.imageUrl}
                 alt={`${analysis.title} 的梦境意象`}
-                className="mt-5 aspect-[4/5] w-full max-w-xl object-cover grayscale-[15%] shadow-[0_28px_90px_rgba(0,0,0,0.22)]"
+                className="mt-5 aspect-square w-full max-w-xl rounded-md bg-black/10 object-contain"
               />
+            ) : isGeneratingImage ? (
+              <div role="status" className="mt-5 flex aspect-square w-full max-w-xl flex-col items-center justify-center gap-4 rounded-md border border-[color:var(--dream-line)] bg-[color:var(--dream-input)]"><Hourglass size={24} className="animate-spin dream-glow-text" /><p className="text-sm dream-muted">梦里的画面，正在慢慢浮现</p></div>
             ) : (
-              <p className="mt-4 text-sm leading-7 dream-muted">这是可选扩展。点击后会根据本次解析生成一张临时意象照片，不会自动生成，也不会保存到云端档案。</p>
+              <p className="mt-4 text-sm leading-7 dream-muted">把梦留成一张画面。生成的图片仅在当前页面保留，可下载收藏。</p>
             )}
           </section>
         </div>
@@ -3009,18 +3096,26 @@ function ArchiveView({
   records,
   motifs,
   selectedRecord,
-  onSelect
+  onSelect,
+  onOpen,
+  onStart
 }: {
   records: DreamRecord[];
   motifs: Array<[string, number]>;
   selectedRecord: DreamRecord | null;
   onSelect: (recordId: string) => void;
+  onOpen: (record: DreamRecord) => void;
+  onStart: () => void;
 }) {
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("");
+  const filtered = records.filter((record) => (!filter || record.analystKey === filter) && `${record.analysis.title} ${record.dream.dreamText} ${record.dream.mood} ${record.analysis.motifs?.join(" ")}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const visibleRecord = filtered.find((record) => record.id === selectedRecord?.id) || filtered[0] || null;
   return (
-    <section className="dream-fade grid gap-5 xl:grid-cols-[360px_1fr] xl:gap-6">
-      <aside className="dream-panel p-4 sm:p-5">
+    <section className="dream-fade grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
+      <aside className="border-b border-[color:var(--dream-line)] pb-6 xl:border-b-0 xl:border-r xl:pr-6">
         <p className="text-xs uppercase tracking-[0.24em] dream-muted">Archive</p>
-        <h1 className="mt-3 font-serif text-4xl font-semibold">梦境档案馆</h1>
+        <h2 className="mt-3 font-serif text-2xl font-medium">梦境档案馆</h2>
         <p className="mt-4 text-sm leading-7 dream-muted">
           每次完整咨询都会留下记录。这里会慢慢看见反复出现的地点、人物、情绪和象征。
         </p>
@@ -3029,15 +3124,20 @@ function ArchiveView({
           <Stat label="母题" value={motifs.length.toString()} />
         </div>
 
+        <div className="relative mt-6"><Search size={16} className="pointer-events-none absolute left-3 top-4 dream-muted" /><input type="search" aria-label="搜索梦境档案" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索梦名、片段或母题" className="dream-input pl-10 text-sm" /></div>
+        <select aria-label="按分析者筛选" value={filter} onChange={(event) => setFilter(event.target.value)} className="dream-input mt-3 text-sm"><option value="">全部分析者</option>{analysts.map((person) => <option key={person.key} value={person.key}>{person.name}</option>)}</select>
+        <p className="mt-4 text-xs dream-muted">{filtered.length} 个梦</p>
+
         <div className="soft-scrollbar mt-6 max-h-72 space-y-2 overflow-y-auto pr-1 sm:max-h-[54vh]">
-          {records.map((record) => (
+          {filtered.map((record) => (
             <button
               key={record.id}
               type="button"
               onClick={() => onSelect(record.id)}
+              aria-pressed={visibleRecord?.id === record.id}
               className={clsx(
                 "w-full border-l px-4 py-3 text-left transition",
-                selectedRecord?.id === record.id
+                visibleRecord?.id === record.id
                   ? "border-[color:var(--dream-glow)] bg-white/8"
                   : "border-[color:var(--dream-line)] hover:border-[color:rgba(243,194,107,0.42)] hover:bg-white/5"
               )}
@@ -3050,16 +3150,29 @@ function ArchiveView({
         </div>
       </aside>
 
-      {selectedRecord ? (
-        <ArchiveDetail record={selectedRecord} motifs={motifs} />
+      {visibleRecord ? (
+        <ArchiveDetail record={visibleRecord} motifs={motifs} onOpen={() => onOpen(visibleRecord)} />
       ) : (
-        <EmptyPanel title="还没有档案" text="完成一次梦境解析后，第一条记录会出现在这里。" />
+        <div className="flex min-h-72 flex-col items-center justify-center gap-5 py-10 text-center">
+          <Archive size={30} className="dream-muted" />
+          <h2 className="font-serif text-2xl">{records.length ? "没有找到这个梦" : "第一场梦，还没落笔"}</h2>
+          <p className="max-w-xs text-sm leading-7 dream-muted">{records.length ? "换一个词，或试试其他分析者。" : "醒来时记得的一小段，也值得留下。"}</p>
+          {records.length ? <button className="quiet-button" type="button" onClick={() => { setSearch(""); setFilter(""); }}>清除筛选</button> : <button className="primary-button" type="button" onClick={onStart}><PenLine size={16} />记录一个梦</button>}
+        </div>
       )}
     </section>
   );
 }
 
-function ArchiveDetail({ record, motifs }: { record: DreamRecord; motifs: Array<[string, number]> }) {
+function ArchiveDetail({ record, motifs, onOpen }: { record: DreamRecord; motifs: Array<[string, number]>; onOpen: () => void }) {
+  function downloadRecord() {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(record, null, 2)], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `idream-${record.createdAt.slice(0, 10)}.json`;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
   return (
     <article className="dream-panel px-4 py-6 sm:px-9 sm:py-9">
       <div className="flex flex-col gap-3 border-b border-[color:var(--dream-line)] pb-7 sm:flex-row sm:items-start sm:justify-between">
@@ -3068,7 +3181,7 @@ function ArchiveDetail({ record, motifs }: { record: DreamRecord; motifs: Array<
           <h2 className="mt-3 font-serif text-4xl font-semibold leading-tight sm:text-5xl">{record.analysis.title}</h2>
           <p className="mt-4 max-w-3xl font-serif text-lg leading-8 dream-muted sm:text-xl sm:leading-9">{record.analysis.opening}</p>
         </div>
-        <p className="shrink-0 text-xs dream-muted">{formatDateTime(record.createdAt)}</p>
+        <div className="flex shrink-0 flex-col gap-3 sm:items-end"><p className="text-xs dream-muted">{formatDateTime(record.createdAt)}</p><div className="flex items-center gap-2"><button type="button" onClick={downloadRecord} className="icon-button" title="导出这个梦" aria-label="导出这个梦"><Download size={17} /></button><button type="button" onClick={onOpen} className="quiet-button">重新打开<ArrowRight size={14} /></button></div></div>
       </div>
 
       <div className="mt-7 grid gap-6 lg:mt-8 lg:grid-cols-[1fr_280px]">

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { guardApiRequest, trimText } from "@/lib/api-guard";
+import { guardApiRequest, isAnalystKey, readJsonObject, trimText } from "@/lib/api-guard";
+import { hasServiceKey, serviceErrorResponse } from "@/lib/service-errors";
 import { createDeepSeekChatCompletion, getDeepSeekModel, safeJsonParse } from "@/lib/deepseek";
 import { analystNames, analystTitles, buildAnalysisPrompt } from "@/lib/prompts";
 import type { DeepSeekChatCompletionParams } from "@/lib/deepseek";
@@ -101,7 +102,7 @@ function validateDreamInput(body: Partial<AnalysisInput>) {
     return "请至少写下十几个字的梦境内容。";
   }
 
-  if (!body.selectedAnalyst) {
+  if (!isAnalystKey(body.selectedAnalyst)) {
     return "请先选择一位心理学家。";
   }
 
@@ -113,6 +114,7 @@ function validateDreamInput(body: Partial<AnalysisInput>) {
 }
 
 export async function POST(request: Request) {
+  if (!hasServiceKey(process.env.DEEPSEEK_API_KEY)) return NextResponse.json({ error: "梦境解析服务暂未就绪，请稍后再试。" }, { status: 503 });
   try {
     const guard = await guardApiRequest(request, {
       key: "analyze",
@@ -126,14 +128,14 @@ export async function POST(request: Request) {
       return guard.response;
     }
 
-    const body = (await request.json()) as AnalysisInput;
+    const body = await readJsonObject<AnalysisInput>(request);
     body.dreamText = trimText(body.dreamText, 2800);
     body.wakingLife = trimText(body.wakingLife, 800);
     body.mood = trimText(body.mood, 400);
     body.previousProfile = trimText(body.previousProfile, 1200);
-    body.followupAnswers = (body.followupAnswers || []).slice(0, 5).map((item) => ({
-      question: trimText(item.question, 160),
-      answer: trimText(item.answer, 800)
+    body.followupAnswers = (Array.isArray(body.followupAnswers) ? body.followupAnswers : []).slice(0, 5).map((item) => ({
+      question: trimText(item?.question, 160),
+      answer: trimText(item?.answer, 800)
     }));
 
     const validationError = validateDreamInput(body);
@@ -184,8 +186,9 @@ export async function POST(request: Request) {
     try {
       analysis = await requestAnalysis(analysisModel, analysisTimeoutMs, messages, 2200);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[analyze] model=${analysisModel} failed: ${message}`);
+      const status = typeof error === "object" && error !== null && "status" in error ? error.status : null;
+      if (status === 401 || status === 403 || status === 404) throw error;
+      console.warn("[analyze] retrying with compact prompt", { status });
 
       analysis = await requestAnalysis(
         fallbackAnalysisModel,
@@ -206,8 +209,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json(analysis);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "分析失败，请稍后再试。";
-
-    return NextResponse.json({ error: message }, { status: 500 });
+    return serviceErrorResponse(error, "暂时无法完成解析，请稍后重试。你的梦境内容会保留。");
   }
 }

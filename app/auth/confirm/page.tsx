@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, CircleAlert, Hourglass, LockKeyhole } from "lucide-react";
 import { getSupabaseBrowserClient, hasSupabaseBrowserEnv } from "@/lib/supabase/browser";
-import type { EmailOtpType } from "@supabase/supabase-js";
+import { authErrorMessage } from "@/lib/auth-messages";
+import { verifyEmailLink } from "@/lib/auth-confirm";
 
 type ConfirmState = "checking" | "success" | "error";
 
@@ -64,54 +65,14 @@ export default function AuthConfirmPage() {
       try {
         const supabase = getSupabaseBrowserClient();
         const params = takeHashParams();
-        const code = params.get("code");
-        const tokenHash = params.get("token_hash");
-        const accessToken = params.get("access_token");
-        const refreshToken = params.get("refresh_token");
-        const type = (params.get("type") || "signup") as EmailOtpType;
-        const urlError = params.get("error_description") || params.get("error");
+        const destination = await verifyEmailLink(supabase.auth, params);
 
-        if (urlError) {
-          finishAsConfirmed("这条确认链接已经被处理过，或自动登录会话已经失效。如果你已经可以登录，说明邮箱确认已经完成；请回到首页用邮箱和密码登录。");
-          return;
-        }
-
-        if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-
-          if (error) {
-            finishAsConfirmed("邮箱确认已经完成。只是当前浏览器没有建立自动登录会话，请回到首页用邮箱和密码登录。");
-            return;
-          }
-        } else if (tokenHash) {
-          const { error } = await supabase.auth.verifyOtp({
-            token_hash: tokenHash,
-            type
-          });
-
-          if (error) {
-            finishAsConfirmed("确认链接已经被处理过，或已经失效。如果你已经可以登录，说明邮箱确认已经完成；请回到首页用邮箱和密码登录。");
-            return;
-          }
-        } else if (accessToken && refreshToken) {
-          const { error } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken
-          });
-
-          if (error) {
-            finishAsConfirmed("邮箱确认已经完成。只是当前浏览器没有建立自动登录会话，请回到首页用邮箱和密码登录。");
-            return;
-          }
-        } else {
-          finishAsConfirmed("确认链接没有携带新的登录信息，可能是已经确认后刷新了页面。请回到首页用邮箱和密码登录。");
-          return;
-        }
-
-        finishAsConfirmed("邮箱确认成功。现在可以回到梦境咨询室继续使用。");
+        finishAsConfirmed("邮箱验证成功，你已经可以回到梦境咨询室。");
+        if (destination === "/auth/reset-password") window.location.replace(destination);
       } catch (error) {
+        window.history.replaceState(null, "", "/auth/confirm");
         setState("error");
-        setMessage(error instanceof Error ? `邮箱确认失败：${error.message}` : "邮箱确认失败。");
+        setMessage(authErrorMessage(error));
       }
     }
 
@@ -120,7 +81,7 @@ export default function AuthConfirmPage() {
 
   return (
     <main className="dream-shell flex min-h-screen items-center justify-center px-5 py-8">
-      <section className="dream-panel w-full max-w-md p-8 text-center">
+      <section className="w-full max-w-md p-5 text-center sm:p-8" aria-live="polite">
         {icon}
         <p className="mt-5 text-xs uppercase tracking-[0.24em] dream-muted">Email Confirmation</p>
         <h1 className="mt-3 font-serif text-3xl font-semibold dream-text">{state === "success" ? "邮箱已确认" : state === "error" ? "确认遇到问题" : "正在确认"}</h1>
