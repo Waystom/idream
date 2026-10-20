@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import clsx from "clsx";
 import {
@@ -11,6 +11,7 @@ import {
   BookOpen,
   CircleAlert,
   Check,
+  ChevronDown,
   Compass,
   House,
   Hourglass,
@@ -39,7 +40,7 @@ import type { AdminStats, BottleStatus, DreamRecordRow, DriftBottleRow, ProfileR
 import type { AnalystKey, DreamAnalysis, FollowupQuestions, GeneratedImage, QuestionAnswer } from "@/lib/types";
 import { authErrorMessage } from "@/lib/auth-messages";
 import { dreamAsMarkdown } from "@/lib/dream-export";
-import { MusicControls, RoomAudioMenu, roomTracks, useRoomAudio, type RoomAudioState, type RoomTrack } from "@/components/room-audio";
+import { MusicControls, RoomAudioMenu, useRoomAudio, type RoomAudioState } from "@/components/room-audio";
 
 type SessionUser = {
   id?: string;
@@ -58,7 +59,6 @@ type DreamDraft = {
 
 type Stage = "home" | "choose" | "consult" | "analysis" | "inner" | "archive" | "profile" | "settings" | "letter" | "sea" | "admin";
 type ThemeMode = "dark" | "light";
-type Soundscape = RoomTrack;
 type AuthMode = "signin" | "signup" | "magiclink" | "reset" | "resend";
 type AnalysisFeedback = "hit" | "miss" | "unsure";
 
@@ -212,7 +212,6 @@ const storageKey = "idream.mvp.state.v3";
 const signupCooldownKey = "idream.auth.signup.cooldownUntil";
 const signupCooldownMs = 60 * 1000;
 
-const soundscapeLabels = Object.fromEntries(roomTracks.map((track) => [track.id, track.name])) as Record<Soundscape, string>;
 
 const stageLabels: Record<Stage, { label: string; eyebrow: string }> = {
   home: { label: "中庭", eyebrow: "Court" },
@@ -391,8 +390,6 @@ export default function Home() {
   const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const audio = useRoomAudio();
-  const soundOn = audio.playing;
-  const soundscape = audio.track.id;
   const [isGeneratingFollowups, setIsGeneratingFollowups] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isAsking, setIsAsking] = useState(false);
@@ -411,6 +408,10 @@ export default function Home() {
   const [signupCooldownUntil, setSignupCooldownUntil] = useState(0);
   const [nowMs, setNowMs] = useState(Date.now());
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [stage, user?.id, user?.name]);
 
   useEffect(() => {
     const storedCooldownUntil = getSignupCooldownUntil();
@@ -1649,15 +1650,15 @@ export default function Home() {
   }
 
   return (
-    <main className="dream-shell px-3 py-3 sm:px-5 sm:py-5">
-      <div className="mx-auto grid w-full max-w-[1440px] gap-4 lg:min-h-[calc(100vh-40px)] lg:grid-cols-[216px_minmax(0,1fr)] lg:gap-8">
-        <AppSidebar
+    <main className="dream-shell workspace-shell" data-view={stage}>
+      {stage === "home" ? <DreamScene /> : null}
+      <div className="workspace-layout">
+        <AppNavigation
           user={user}
           stage={stage}
           analyst={analyst}
           recordsCount={records.length}
-          soundOn={soundOn}
-          soundscape={soundscape}
+          audio={audio}
           cloudMode={supabaseEnabled}
           isSyncing={isCloudSyncing}
           onSignOut={signOut}
@@ -1670,8 +1671,8 @@ export default function Home() {
           onNewDream={resetDream}
         />
 
-        <section className="min-w-0 px-1 pb-5 sm:px-0">
-          <header className="workspace-header dream-fade mb-4 flex items-end justify-between gap-3 border-b border-[color:var(--dream-line)] pb-4 sm:mb-5 sm:pb-5">
+        <section className="workspace-content">
+          <header className={clsx("workspace-header dream-fade", stage === "home" && "home-workspace-header")}>
             <div>
               <p className="text-xs uppercase tracking-[0.28em] dream-muted">{stageLabel.eyebrow}</p>
               <h1 className="mt-2 font-serif text-2xl font-medium leading-tight dream-text sm:text-3xl">{stageLabel.label}</h1>
@@ -1682,7 +1683,6 @@ export default function Home() {
                   第 {consultStep + 1} / {intakeSteps.length + 5} 步
                 </span>
               ) : null}
-              <RoomAudioMenu audio={audio} />
               {analysis && (stage === "analysis" || stage === "inner" || stage === "letter") ? (
                 <button type="button" onClick={() => setStage("archive")} className="quiet-button">
                   <Archive size={15} />
@@ -1721,6 +1721,7 @@ export default function Home() {
               onProfile={() => setStage("profile")}
               onSea={() => setStage("sea")}
               onSettings={() => setStage("settings")}
+              onChoose={() => setStage("choose")}
               onOpen={openArchivedRecord}
             />
           ) : null}
@@ -1885,9 +1886,10 @@ function AuthScreen({
   const titles: Record<AuthMode, string> = { signin: "回到你的房间", signup: "留一间房给自己", magiclink: "用邮件轻轻敲门", reset: "找回你的密码", resend: "重新确认邮箱" };
 
   return (
-    <main className="dream-shell auth-shell px-5 py-5 sm:px-10 sm:py-7">
-      <div className="mx-auto flex min-h-[calc(100svh-56px)] w-full max-w-6xl flex-col">
-        <header className="flex items-center justify-between gap-3 border-b border-[color:var(--dream-line)] pb-4 sm:pb-5">
+    <main className="dream-shell auth-shell">
+      <DreamScene />
+      <div className="auth-inner">
+        <header className="auth-header">
           <div>
             <p className="font-serif text-2xl font-semibold tracking-wide">Idream</p>
             <p className="mt-1 text-xs uppercase tracking-[0.28em] dream-muted">private dream room</p>
@@ -1903,36 +1905,17 @@ function AuthScreen({
           </div>
         </header>
 
-        <section className="auth-layout grid flex-1 gap-10 py-9 sm:gap-14 sm:py-12 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-center">
-          <div className="min-w-0 lg:pr-8">
-            <p className="mb-5 inline-flex items-center gap-2 text-sm dream-glow-text">
-              <Moon size={16} />
-              请把梦带进来
-            </p>
-            <h1 className="max-w-lg font-serif text-3xl font-medium leading-[1.5] dream-text sm:text-5xl sm:leading-[1.4]">
-              梦境咨询室
-            </h1>
-            <p className="mt-4 max-w-sm font-serif text-base leading-8 dream-muted sm:text-lg">
-              那些醒来后仍留在心里的画面，<br />值得被温柔地听见。
-            </p>
-            <div className="mt-9 hidden max-w-sm grid-cols-3 gap-4 sm:grid" aria-label="三位分析者">
-              {analysts.map((person) => (
-                <div key={person.key}>
-                  <div className="relative aspect-[3/4] overflow-hidden rounded-md bg-white/5">
-                    <Image src={person.portrait} alt={person.name} fill sizes="120px" className="object-cover object-top grayscale opacity-80" />
-                  </div>
-                  <p className="mt-3 text-sm dream-text">{person.name}</p>
-                  <p className="mt-1 text-[11px] dream-muted">{person.english.split(" ").at(-1)}</p>
-                </div>
-              ))}
-            </div>
+        <section className="auth-layout">
+          <div className="auth-intro">
+            <p className="scene-eyebrow">BETWEEN DREAM & DAWN</p>
+            <h1>Idream</h1>
+            <p>在梦与醒之间，遇见自己。</p>
           </div>
 
-          <form onSubmit={enterRoom} className="auth-form min-w-0 border-t border-[color:var(--dream-line)] pt-7 lg:border-l lg:border-t-0 lg:pl-9 lg:pt-0" aria-busy={isAuthenticating}>
+          <form onSubmit={enterRoom} className="auth-form" aria-busy={isAuthenticating}>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.24em] dream-muted">{supabaseEnabled ? "Account" : "Local Entry"}</p>
-                <h2 className="mt-3 font-serif text-2xl font-medium">{supabaseEnabled ? titles[authMode] : "回到你的房间"}</h2>
+                <h2 className="font-serif text-2xl font-medium">{supabaseEnabled ? titles[authMode] : "回到你的房间"}</h2>
               </div>
               <LockKeyhole className="dream-muted" size={18} />
             </div>
@@ -2076,6 +2059,7 @@ function AuthScreen({
             </p>
           </form>
         </section>
+        <p className="auth-scene-note"><span>THE THRESHOLD</span>门外，是另一片海。</p>
       </div>
     </main>
   );
@@ -2090,13 +2074,12 @@ function QuietField({ label, htmlFor, children }: { label: string; htmlFor: stri
   );
 }
 
-function AppSidebar({
+function AppNavigation({
   user,
   stage,
   analyst,
   recordsCount,
-  soundOn,
-  soundscape,
+  audio,
   cloudMode,
   isSyncing,
   onSignOut,
@@ -2107,14 +2090,24 @@ function AppSidebar({
   stage: Stage;
   analyst: ReturnType<typeof getAnalyst>;
   recordsCount: number;
-  soundOn: boolean;
-  soundscape: Soundscape;
+  audio: RoomAudioState;
   cloudMode: boolean;
   isSyncing: boolean;
   onSignOut: () => void;
   onStage: (stage: Stage) => void;
   onNewDream: () => void;
 }) {
+  const accountMenu = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (accountMenu.current) accountMenu.current.open = false;
+  }, [stage]);
+  useEffect(() => {
+    const close = (event: PointerEvent) => {
+      if (accountMenu.current && !accountMenu.current.contains(event.target as Node)) accountMenu.current.open = false;
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, []);
   const navItems: NavItem[] = ([
     { stage: "home", label: "中庭", icon: House },
     { stage: "choose", label: "分析者", icon: Compass },
@@ -2126,23 +2119,9 @@ function AppSidebar({
   ] satisfies NavItem[]).filter((item) => !item.adminOnly || user.role === "admin");
 
   return (
-    <aside className="app-sidebar dream-fade flex flex-col gap-3 pb-4 lg:sticky lg:top-5 lg:h-[calc(100vh-40px)] lg:gap-5 lg:pb-0 lg:pr-6">
-      <div className="flex items-center justify-between gap-3 lg:items-start">
-        <button type="button" onClick={() => onStage("home")} className="text-left">
-          <p className="font-serif text-2xl font-semibold leading-none">Idream</p>
-          <p className="mt-2 text-[10px] uppercase tracking-[0.28em] dream-muted">private room</p>
-        </button>
-        <LockKeyhole className="mt-1 dream-muted" size={16} />
-      </div>
-
-      <div className="hidden border-y border-[color:var(--dream-line)] py-4 lg:block">
-        <p className="text-xs dream-muted">{user.name}</p>
-        <p className="mt-2 line-clamp-2 text-sm leading-6 dream-text">
-          {user.intention || "今晚先安静地听一听梦。"}
-        </p>
-      </div>
-
-      <nav className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible" aria-label="主导航">
+    <header className="app-navigation">
+      <button type="button" onClick={() => onStage("home")} className="wordmark" aria-label="Idream 中庭">Idream<span>梦的私人来信</span></button>
+      <nav className="main-navigation" aria-label="主导航">
         {navItems.map((item) => {
           const Icon = item.icon;
           const active = stage === item.stage || (item.stage === "choose" && ["consult", "analysis", "inner", "letter"].includes(stage));
@@ -2153,65 +2132,33 @@ function AppSidebar({
               type="button"
               onClick={() => onStage(item.stage)}
               aria-current={active ? "page" : undefined}
-              className={clsx(
-                "group flex min-h-12 flex-1 shrink-0 basis-12 items-center justify-center px-2 text-center text-xs transition lg:min-h-11 lg:flex-none lg:basis-auto lg:justify-between lg:px-3 lg:text-left lg:text-sm",
-                active
-                  ? "bg-[color:rgba(243,194,107,0.14)] text-[color:var(--dream-text)]"
-                  : "text-[color:var(--dream-muted)] hover:bg-white/[0.06] hover:text-[color:var(--dream-text)]"
-              )}
+              className="navigation-item"
             >
-              <span className="flex flex-col items-center gap-1 lg:flex-row lg:gap-3">
-                <Icon size={16} className={clsx(active && "text-[color:var(--dream-glow)]")} />
+              <span>
+                <Icon size={17} strokeWidth={1.5} />
                 {item.label}
               </span>
-              {item.count ? <span className="hidden text-xs dream-muted lg:inline">{item.count}</span> : null}
+              {item.count ? <small>{item.count}</small> : null}
             </button>
           );
         })}
       </nav>
 
-      <button
-        type="button"
-        onClick={onNewDream}
-        className="primary-button mt-1 justify-between"
-      >
-        <span className="flex items-center gap-2">
-          <PenLine size={16} />
-          记录新梦
-        </span>
-        <ArrowRight size={16} />
-      </button>
-
-      <div className="mt-auto hidden border-t border-[color:var(--dream-line)] pt-4 lg:block">
-        <p className="text-xs uppercase tracking-[0.22em] dream-muted">Current</p>
-        <div className="mt-3 flex items-center gap-3">
-          {analyst ? (
-            <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full">
-              <Image src={analyst.portrait} alt={analyst.english} fill sizes="48px" className="object-cover grayscale" />
-            </div>
-          ) : (
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/8">
-              <Moon size={17} className="dream-muted" />
-            </div>
-          )}
-          <div className="min-w-0">
-            <p className="truncate text-sm dream-text">{analyst?.name || "尚未选择"}</p>
-            <p className="mt-1 truncate text-xs dream-muted">
-              {soundOn ? `${soundscapeLabels[soundscape]}已开启` : "音景关闭"}
-            </p>
-          </div>
-        </div>
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <p className="text-xs dream-muted">
-            {cloudMode ? (isSyncing ? "云端同步中" : "云端账户") : "本地体验"}
-          </p>
-          <button type="button" onClick={onSignOut} className="text-xs dream-muted transition hover:text-[color:var(--dream-text)]">
-            退出
-          </button>
-        </div>
+      <div className="navigation-tools">
+        <RoomAudioMenu audio={audio} />
+        <button type="button" onClick={onNewDream} className="nav-write" title="记录新梦" aria-label="记录新梦"><PenLine size={18} /></button>
+        <details ref={accountMenu} className="account-menu" onKeyDown={(event) => { if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}><summary aria-label="账户菜单" title="账户菜单"><span className="account-avatar">{user.name.slice(0,1)}</span><ChevronDown size={12} /></summary>
+          <div className="account-popover"><p>{user.name}</p><span>{cloudMode ? isSyncing ? "正在保存" : "私密账户" : "本地体验"}</span>{analyst ? <span className="account-analyst">当前分析者 · {analyst.name}</span> : null}<button type="button" onClick={() => onStage("settings")}><Settings size={15} />房间设置</button><button type="button" onClick={onSignOut}><LockKeyhole size={15} />退出账户</button></div>
+        </details>
       </div>
-    </aside>
+    </header>
   );
+}
+
+function DreamScene() {
+  // Native picture sources preserve a separate composition for narrow screens.
+  // eslint-disable-next-line @next/next/no-img-element
+  return <div className="dream-scene" aria-hidden="true"><picture><source media="(max-width: 639px)" srcSet="/scenes/dream-threshold-mobile.webp" /><img src="/scenes/dream-threshold.webp" alt="" fetchPriority="high" /></picture></div>;
 }
 
 function HomeView({
@@ -2226,6 +2173,7 @@ function HomeView({
   onProfile,
   onSea,
   onSettings,
+  onChoose,
   onOpen
 }: {
   user: SessionUser;
@@ -2239,9 +2187,9 @@ function HomeView({
   onProfile: () => void;
   onSea: () => void;
   onSettings: () => void;
+  onChoose: () => void;
   onOpen: (record: DreamRecord) => void;
 }) {
-  const latest = records[0];
   const hour = new Date().getHours();
   const greeting = hour < 6 ? "夜深了" : hour < 12 ? "早安" : hour < 18 ? "午后好" : "晚上好";
   const days = Array.from({ length: 7 }, (_, index) => {
@@ -2255,33 +2203,25 @@ function HomeView({
     <section className="dream-fade home-layout">
       <div className="min-w-0">
         <section className="home-intro">
-          <div className="min-w-0">
-          <p className="inline-flex items-center gap-2 text-xs dream-muted"><span className="home-greeting-line" />{greeting}，{user.name}</p>
-          <h2 className="mt-5 font-serif text-3xl font-medium leading-[1.5] sm:text-4xl">把梦留在醒来之后。</h2>
-          <p className="mt-4 max-w-md text-sm leading-8 dream-muted">
-            {hasDraft ? "那个还没说完的梦，仍然在这里等你。" : "不必急着解释。先让记忆停一停，写下醒来时还记得的片段。"}
-          </p>
-          <div className="mt-7 flex flex-wrap gap-3">
-            <button type="button" onClick={onStart} className="primary-button">
-              <PenLine size={16} />{hasDraft ? "继续上次的梦" : "记录一个梦"}<ArrowRight size={15} />
-            </button>
+          <div className="home-hero-copy">
+            <p className="scene-eyebrow">{greeting}，{user.name}</p>
+            <h1>Idream</h1>
+            <p className="scene-heading">梦醒之后，仍有回声。</p>
+            <p className="scene-description">{hasDraft ? "那个还没说完的梦，仍然在这里等你。" : "把昨夜的片段，留给此刻的自己。"}</p>
+            <button type="button" onClick={onStart} className="scene-primary"><PenLine size={17} />{hasDraft ? "继续上次的梦" : "写下一个梦"}<ArrowRight size={17} /></button>
           </div>
-          </div>
-          {latest?.image ? <button type="button" className="home-dream-image" onClick={() => onOpen(latest)} aria-label={`打开梦境：${latest.analysis.title}`}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={latest.image.imageUrl} alt={latest.analysis.title} /><span>最近的梦境意象<ArrowRight size={13} /></span>
-          </button> : <div className="home-portraits" aria-label="三位梦境分析者">{analysts.map((person) => <div key={person.key}><Image src={person.portrait} alt={person.name} width={96} height={128} className="object-cover object-top grayscale" /><span>{person.name}</span></div>)}</div>}
+          <div className="scene-caption"><span>THE THRESHOLD</span><span>门外，是另一片海。</span></div>
+          <div className="home-hero-bottom"><span><Moon size={15} strokeWidth={1.5} />今晚，让梦慢慢说。</span><button type="button" onClick={onChoose}>遇见你的分析者<ArrowRight size={15} /></button></div>
         </section>
 
         <section className="recent-dreams">
-          <div className="section-heading"><div><p className="section-eyebrow">DREAM JOURNAL</p><h2>最近留下的梦</h2></div><button type="button" className="text-link inline-flex items-center gap-2 text-xs" onClick={onArchive}>全部档案<ArrowRight size={14} /></button></div>
+          <div className="section-heading"><div><p className="section-eyebrow">DREAM JOURNAL</p><h2>梦的余页</h2></div><button type="button" className="text-link inline-flex items-center gap-2 text-xs" onClick={onArchive}>翻阅全部<ArrowRight size={14} /></button></div>
           {records.length ? <div className="recent-dream-list">{records.slice(0, 3).map((record, index) => <button key={record.id} type="button" className="recent-dream-row" onClick={() => onOpen(record)}>
-            <span className="recent-dream-index">{String(records.length - index).padStart(2, "0")}</span>
             <span className="recent-dream-thumbnail">{record.image ? <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={record.image.imageUrl} alt="" />
-            </> : <Image src={(getAnalyst(record.analystKey) || analysts[0]).portrait} alt="" fill sizes="64px" className="object-cover object-top grayscale" />}</span>
-            <span className="min-w-0 flex-1"><span className="block truncate font-serif text-lg">{record.analysis.title}</span><span className="mt-2 block line-clamp-1 text-xs leading-6 dream-muted">{record.dream.dreamText}</span><span className="mt-1 block text-xs dream-muted">{formatDateTime(record.createdAt)}<span className="mx-2">·</span>{record.analystName}</span></span>
+            </> : <Image src="/scenes/dream-threshold.webp" alt="" fill sizes="(max-width: 639px) 100vw, 400px" className="object-cover" />}</span>
+            <span className="recent-dream-copy"><span className="recent-dream-date">{formatDateTime(record.createdAt)}<span>·</span>{record.analystName}</span><span className="recent-dream-title">{record.analysis.title}</span><span className="recent-dream-excerpt">{record.dream.dreamText}</span><span className="recent-dream-number">{String(records.length - index).padStart(2, "0")}</span></span>
             <ArrowRight size={16} className="shrink-0 dream-muted" />
           </button>)}</div> : <div className="journal-empty"><BookOpen size={26} strokeWidth={1.2} /><p className="font-serif text-xl">第一场梦，还没落笔</p><p className="text-sm leading-7 dream-muted">一段画面、一点余温，都可以成为开始。</p></div>}
         </section>
@@ -2304,26 +2244,20 @@ function HomeView({
 
       <aside className="home-aside">
         <section className="home-side-section">
-          <div className="flex items-center justify-between gap-2"><p className="section-eyebrow">YOUR JOURNEY</p><CalendarDays size={15} className="dream-muted" /></div>
-          <div className="mt-5 grid grid-cols-3 gap-2 sm:gap-3">
-            <Stat label="梦" value={records.length.toString()} />
-            <Stat label="问" value={totalQaCount.toString()} />
-            <Stat label="母题" value={motifs.length.toString()} />
-          </div>
+          <div className="flex items-center justify-between gap-2"><p className="section-eyebrow">写梦的日子</p><CalendarDays size={15} className="dream-muted" /></div>
+          <p className="mt-4 text-sm dream-muted">已留住 {records.length} 场梦，进行 {totalQaCount} 次内心对话。</p>
           <div className="dream-week" aria-label="最近七天的梦境记录">{days.map(({date,count}) => <div key={date.toDateString()} title={`${date.toLocaleDateString("zh-CN")}：${count} 个梦`}><span>{["日","一","二","三","四","五","六"][date.getDay()]}</span><span className={clsx("dream-week-day", count > 0 && "has-dream", date.toDateString() === new Date().toDateString() && "is-today")}>{date.getDate()}</span></div>)}</div>
         </section>
 
         <section className="home-side-section">
-          <p className="section-eyebrow">YOUR ANALYST</p>
+          <p className="section-eyebrow">陪你听梦的人</p>
           <div className="mt-4 flex items-center gap-3">
             <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full">
               <Image src={(analyst || analysts[0]).portrait} alt={(analyst || analysts[0]).name} fill sizes="56px" className="object-cover object-top grayscale" />
             </div>
             <div><h3 className="font-serif text-xl font-medium">{analyst?.name || "选择一位分析者"}</h3><p className="mt-1 text-xs dream-muted">{analyst?.english || "Freud · Jung · Adler"}</p></div>
           </div>
-          <p className="mt-4 text-sm leading-7 dream-muted">
-            {analyst?.note || "你可以先进入选择室，从弗洛伊德、荣格、阿德勒中选一位陪你进入这次梦。"}
-          </p>
+          <button type="button" onClick={onChoose} className="mt-4 text-link inline-flex items-center gap-2 text-xs">{analyst ? "换一个视角" : "选择分析者"}<ArrowRight size={14} /></button>
         </section>
 
         {motifs.length ? <section className="home-side-section"><p className="section-eyebrow">RECURRING MOTIFS</p><h3 className="mt-3 font-serif text-lg">反复出现的线索</h3><div className="mt-4 space-y-3">{motifs.slice(0,4).map(([motif,count]) => <div key={motif} className="flex items-center justify-between gap-3 text-sm dream-muted"><span>{motif}</span><span className="tabular-nums">{count}<span className="ml-1 text-xs">次</span></span></div>)}</div></section> : null}
@@ -2368,15 +2302,9 @@ function ChooseAnalyst({
   onChoose: (key: AnalystKey) => void;
 }) {
   return (
-    <section className="dream-fade py-3 sm:py-8">
-      <div className="mb-7 max-w-3xl sm:mb-10">
-        <p className="mb-4 text-xs uppercase tracking-[0.3em] dream-muted">Choose The Analyst</p>
-        <h2 className="font-serif text-2xl font-medium leading-relaxed dream-text sm:text-3xl">
-          选择一位与你一起进入梦的人
-        </h2>
-        <p className="mt-4 font-serif text-lg leading-8 dream-muted">
-          三种视角，没有标准答案。此刻，你更想与谁聊聊？
-        </p>
+    <section className="dream-fade analyst-selection">
+      <div className="mb-7 max-w-3xl sm:mb-9">
+        <p className="text-sm leading-7 dream-muted">三种视角，没有标准答案。此刻，你更想与谁聊聊？</p>
       </div>
 
       <div className="grid gap-4 sm:gap-6 lg:grid-cols-3">
@@ -3414,7 +3342,7 @@ function AdminView({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border border-[color:var(--dream-line)] bg-white/5 p-3 sm:p-4">
+    <div className="journal-stat">
       <p className="text-xs uppercase tracking-[0.2em] dream-muted">{label}</p>
       <p className="mt-2 font-serif text-2xl font-semibold sm:text-3xl">{value}</p>
     </div>
