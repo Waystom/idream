@@ -1,17 +1,17 @@
 "use client";
 
-import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import clsx from "clsx";
 import {
   ArrowLeft,
   ArrowRight,
   Archive,
+  CalendarDays,
   BookOpen,
   CircleAlert,
   Check,
   Compass,
-  Feather,
   House,
   Hourglass,
   LibraryBig,
@@ -30,8 +30,6 @@ import {
   Trash2,
   UserRound,
   UsersRound,
-  Volume2,
-  VolumeX,
   Waves
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -40,6 +38,8 @@ import { getSupabaseBrowserClient, hasSupabaseBrowserEnv } from "@/lib/supabase/
 import type { AdminStats, BottleStatus, DreamRecordRow, DriftBottleRow, ProfileRow, ProfileSnapshotRow, UserRole } from "@/lib/database";
 import type { AnalystKey, DreamAnalysis, FollowupQuestions, GeneratedImage, QuestionAnswer } from "@/lib/types";
 import { authErrorMessage } from "@/lib/auth-messages";
+import { dreamAsMarkdown } from "@/lib/dream-export";
+import { MusicControls, RoomAudioMenu, roomTracks, useRoomAudio, type RoomAudioState, type RoomTrack } from "@/components/room-audio";
 
 type SessionUser = {
   id?: string;
@@ -58,7 +58,7 @@ type DreamDraft = {
 
 type Stage = "home" | "choose" | "consult" | "analysis" | "inner" | "archive" | "profile" | "settings" | "letter" | "sea" | "admin";
 type ThemeMode = "dark" | "light";
-type Soundscape = "warmNoise" | "deepSea" | "nightAir" | "softBreath";
+type Soundscape = RoomTrack;
 type AuthMode = "signin" | "signup" | "magiclink" | "reset" | "resend";
 type AnalysisFeedback = "hit" | "miss" | "unsure";
 
@@ -212,12 +212,7 @@ const storageKey = "idream.mvp.state.v3";
 const signupCooldownKey = "idream.auth.signup.cooldownUntil";
 const signupCooldownMs = 60 * 1000;
 
-const soundscapeLabels: Record<Soundscape, string> = {
-  warmNoise: "暖白噪",
-  deepSea: "深海",
-  nightAir: "夜风",
-  softBreath: "低频呼吸"
-};
+const soundscapeLabels = Object.fromEntries(roomTracks.map((track) => [track.id, track.name])) as Record<Soundscape, string>;
 
 const stageLabels: Record<Stage, { label: string; eyebrow: string }> = {
   home: { label: "中庭", eyebrow: "Court" },
@@ -259,6 +254,15 @@ function formatDateTime(value: string) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function downloadText(text: string, filename: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function toDreamRecord(row: DreamRecordRow): DreamRecord {
@@ -360,262 +364,6 @@ function getSignupCooldownUntil() {
   return Number.isFinite(value) ? value : 0;
 }
 
-function playDrawerSound(volume: number) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  const AudioContextClass = window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-
-  if (!AudioContextClass) {
-    return;
-  }
-
-  const context = new AudioContextClass();
-  const duration = 0.42;
-  const now = context.currentTime;
-  const noiseBuffer = context.createBuffer(1, Math.floor(context.sampleRate * duration), context.sampleRate);
-  const data = noiseBuffer.getChannelData(0);
-
-  for (let index = 0; index < data.length; index += 1) {
-    const fade = 1 - index / data.length;
-    data[index] = (Math.random() * 2 - 1) * fade * 0.18;
-  }
-
-  const noise = context.createBufferSource();
-  noise.buffer = noiseBuffer;
-
-  const filter = context.createBiquadFilter();
-  filter.type = "bandpass";
-  filter.frequency.setValueAtTime(540, now);
-  filter.frequency.exponentialRampToValueAtTime(160, now + duration);
-  filter.Q.value = 1.4;
-
-  const gain = context.createGain();
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume * 0.16), now + 0.04);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-
-  noise.connect(filter);
-  filter.connect(gain);
-  gain.connect(context.destination);
-  noise.start(now);
-  noise.stop(now + duration);
-
-  window.setTimeout(() => void context.close(), (duration + 0.1) * 1000);
-}
-
-function AmbientSound({
-  enabled,
-  soundscape,
-  volume
-}: {
-  enabled: boolean;
-  soundscape: Soundscape;
-  volume: number;
-}) {
-  const contextRef = useRef<AudioContext | null>(null);
-  const nodesRef = useRef<Array<{ stop?: () => void; disconnect?: () => void }>>([]);
-
-  useEffect(() => {
-    nodesRef.current.forEach((node) => {
-      try {
-        node.stop?.();
-        node.disconnect?.();
-      } catch {
-        // Audio nodes can already be stopped during rapid soundscape switches.
-      }
-    });
-    nodesRef.current = [];
-
-    if (!enabled) {
-      void contextRef.current?.close();
-      contextRef.current = null;
-      return;
-    }
-
-    const AudioContextClass = window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-
-    if (!AudioContextClass) {
-      return;
-    }
-
-    const context = new AudioContextClass();
-    const master = context.createGain();
-    master.gain.value = volume;
-    master.connect(context.destination);
-    contextRef.current = context;
-
-    const soundNodes = createAmbientNodes(context, soundscape);
-    soundNodes.forEach((node) => {
-      node.output.connect(master);
-      node.source.start();
-      nodesRef.current.push(node.source, node.output, node);
-    });
-
-    return () => {
-      nodesRef.current.forEach((node) => {
-        try {
-          node.stop?.();
-          node.disconnect?.();
-        } catch {
-          // Ignore already-stopped nodes.
-        }
-      });
-      nodesRef.current = [];
-      void context.close();
-      contextRef.current = null;
-    };
-  }, [enabled, soundscape, volume]);
-
-  return null;
-}
-
-function createAmbientNodes(context: AudioContext, soundscape: Soundscape) {
-  if (soundscape === "deepSea") {
-    return [
-      createNoiseSource(context, { type: "lowpass", frequency: 190, q: 0.65, gain: 0.9, modulationDepth: 0.22, modulationRate: 0.045 }),
-      createNoiseSource(context, { type: "bandpass", frequency: 420, q: 0.55, gain: 0.22, modulationDepth: 0.16, modulationRate: 0.032 })
-    ];
-  }
-
-  if (soundscape === "nightAir") {
-    return [
-      createNoiseSource(context, { type: "highpass", frequency: 980, q: 0.45, gain: 0.38, modulationDepth: 0.2, modulationRate: 0.055 }),
-      createNoiseSource(context, { type: "bandpass", frequency: 1450, q: 0.35, gain: 0.14, modulationDepth: 0.24, modulationRate: 0.038 })
-    ];
-  }
-
-  if (soundscape === "softBreath") {
-    return [
-      createNoiseSource(context, { type: "lowpass", frequency: 260, q: 0.8, gain: 0.62, modulationDepth: 0.34, modulationRate: 0.08 }),
-      createNoiseSource(context, { type: "bandpass", frequency: 620, q: 0.5, gain: 0.16, modulationDepth: 0.2, modulationRate: 0.05 })
-    ];
-  }
-
-  return [
-    createNoiseSource(context, { type: "lowpass", frequency: 620, q: 0.55, gain: 0.5, modulationDepth: 0.08, modulationRate: 0.04 }),
-    createNoiseSource(context, { type: "highpass", frequency: 1800, q: 0.35, gain: 0.12, modulationDepth: 0.06, modulationRate: 0.03 })
-  ];
-}
-
-function createNoiseSource(
-  context: AudioContext,
-  options: {
-    type: BiquadFilterType;
-    frequency: number;
-    q: number;
-    gain: number;
-    modulationDepth: number;
-    modulationRate: number;
-  }
-) {
-  const buffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
-  const data = buffer.getChannelData(0);
-  let previous = 0;
-
-  for (let index = 0; index < data.length; index += 1) {
-    previous = previous * 0.72 + (Math.random() * 2 - 1) * 0.28;
-    data[index] = previous;
-  }
-
-  const source = context.createBufferSource();
-  source.buffer = buffer;
-  source.loop = true;
-
-  const filter = context.createBiquadFilter();
-  filter.type = options.type;
-  filter.frequency.value = options.frequency;
-  filter.Q.value = options.q;
-
-  const gain = context.createGain();
-  gain.gain.value = options.gain;
-
-  const lfo = context.createOscillator();
-  const lfoGain = context.createGain();
-  lfo.type = "sine";
-  lfo.frequency.value = options.modulationRate;
-  lfoGain.gain.value = options.gain * options.modulationDepth;
-  lfo.connect(lfoGain);
-  lfoGain.connect(gain.gain);
-  lfo.start();
-
-  source.connect(filter);
-  filter.connect(gain);
-
-  return {
-    source,
-    output: gain,
-    stop: () => lfo.stop(),
-    disconnect: () => {
-      lfo.disconnect();
-      lfoGain.disconnect();
-    }
-  };
-}
-
-function SoundscapeControl({
-  soundOn,
-  soundscape,
-  volume,
-  setSoundOn,
-  setSoundscape,
-  setVolume
-}: {
-  soundOn: boolean;
-  soundscape: Soundscape;
-  volume: number;
-  setSoundOn: (value: boolean) => void;
-  setSoundscape: (value: Soundscape) => void;
-  setVolume: (value: number) => void;
-}) {
-  return (
-    <section className="dream-panel mb-5 flex flex-col gap-4 px-4 py-3 sm:mb-6 lg:flex-row lg:items-center lg:justify-between">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <button type="button" onClick={() => setSoundOn(!soundOn)} className="quiet-button">
-          {soundOn ? <Volume2 size={15} /> : <VolumeX size={15} />}
-          <span>{soundOn ? "关闭音景" : "唤醒音景"}</span>
-        </button>
-        <p className="text-xs leading-5 dream-muted">默认静音，只在你手动开启后播放。</p>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        {(Object.keys(soundscapeLabels) as Soundscape[]).map((item) => (
-          <button
-            key={item}
-            type="button"
-            onClick={() => {
-              setSoundscape(item);
-              if (!soundOn) {
-                setSoundOn(true);
-              }
-            }}
-            className={clsx(
-              "px-3 py-2 text-xs transition",
-              soundscape === item && soundOn
-                ? "bg-[color:var(--dream-glow)] text-[#0A1128]"
-                : "bg-white/5 dream-muted hover:bg-white/10 hover:text-[color:var(--dream-text)]"
-            )}
-          >
-            {soundscapeLabels[item]}
-          </button>
-        ))}
-        <label className="flex w-full items-center gap-2 text-xs dream-muted sm:ml-1 sm:w-auto">
-          <span>音量</span>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={volume}
-            onChange={(event) => setVolume(Number(event.target.value))}
-            className="h-1 min-w-0 flex-1 accent-[color:var(--dream-glow)] sm:w-24 sm:flex-none"
-          />
-        </label>
-      </div>
-    </section>
-  );
-}
 
 export default function Home() {
   const supabaseEnabled = hasSupabaseBrowserEnv();
@@ -642,9 +390,9 @@ export default function Home() {
   const [activeRecordId, setActiveRecordId] = useState<string | null>(null);
   const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
-  const [soundOn, setSoundOn] = useState(false);
-  const [soundscape, setSoundscape] = useState<Soundscape>("warmNoise");
-  const [volume, setVolume] = useState(0.28);
+  const audio = useRoomAudio();
+  const soundOn = audio.playing;
+  const soundscape = audio.track.id;
   const [isGeneratingFollowups, setIsGeneratingFollowups] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isAsking, setIsAsking] = useState(false);
@@ -1051,6 +799,7 @@ export default function Home() {
   }
 
   async function signOut() {
+    audio.stop();
     if (supabaseEnabled) {
       await getSupabaseBrowserClient().auth.signOut();
     }
@@ -1760,7 +1509,6 @@ export default function Home() {
         ].join("\n")
       );
       setStage("analysis");
-      playDrawerSound(volume);
 
       void (async () => {
         let recordId: string;
@@ -1914,9 +1662,6 @@ export default function Home() {
           isSyncing={isCloudSyncing}
           onSignOut={signOut}
           onStage={(nextStage) => {
-            if (nextStage === "archive") {
-              playDrawerSound(volume);
-            }
             if (nextStage === "admin") {
               void loadAdminDashboard();
             }
@@ -1926,17 +1671,18 @@ export default function Home() {
         />
 
         <section className="min-w-0 px-1 pb-5 sm:px-0">
-          <header className="dream-fade mb-4 flex flex-col gap-3 border-b border-[color:var(--dream-line)] pb-4 sm:mb-5 sm:pb-5 md:flex-row md:items-end md:justify-between">
+          <header className="workspace-header dream-fade mb-4 flex items-end justify-between gap-3 border-b border-[color:var(--dream-line)] pb-4 sm:mb-5 sm:pb-5">
             <div>
               <p className="text-xs uppercase tracking-[0.28em] dream-muted">{stageLabel.eyebrow}</p>
               <h1 className="mt-2 font-serif text-2xl font-medium leading-tight dream-text sm:text-3xl">{stageLabel.label}</h1>
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm dream-muted">
+            <div className="flex max-w-[68%] flex-wrap items-center justify-end gap-2 text-sm dream-muted">
               {stage === "consult" ? (
                 <span>
                   第 {consultStep + 1} / {intakeSteps.length + 5} 步
                 </span>
               ) : null}
+              <RoomAudioMenu audio={audio} />
               {analysis && (stage === "analysis" || stage === "inner" || stage === "letter") ? (
                 <button type="button" onClick={() => setStage("archive")} className="quiet-button">
                   <Archive size={15} />
@@ -1970,12 +1716,12 @@ export default function Home() {
               hasDraft={Boolean(selectedAnalyst && dream.dreamText.trim() && !analysis)}
               onStart={() => setStage(selectedAnalyst && dream.dreamText.trim() && !analysis ? "consult" : "choose")}
               onArchive={() => {
-                playDrawerSound(volume);
                 setStage("archive");
               }}
               onProfile={() => setStage("profile")}
               onSea={() => setStage("sea")}
               onSettings={() => setStage("settings")}
+              onOpen={openArchivedRecord}
             />
           ) : null}
 
@@ -2042,7 +1788,6 @@ export default function Home() {
               onSelect={(recordId) => {
                 setSelectedArchiveId(recordId);
                 setActiveRecordId(recordId);
-                playDrawerSound(volume);
               }}
             />
           ) : null}
@@ -2055,15 +1800,10 @@ export default function Home() {
             <SettingsView
               user={user}
               theme={theme}
-              soundOn={soundOn}
-              soundscape={soundscape}
-              volume={volume}
+              audio={audio}
               recordsCount={records.length}
               cloudMode={supabaseEnabled}
               setTheme={setTheme}
-              setSoundOn={setSoundOn}
-              setSoundscape={setSoundscape}
-              setVolume={setVolume}
               exportArchive={exportArchive}
               clearMemory={clearMemory}
               deleteCloudMemory={deleteCloudMemory}
@@ -2095,7 +1835,6 @@ export default function Home() {
           ) : null}
         </section>
       </div>
-      <AmbientSound enabled={soundOn} soundscape={soundscape} volume={volume} />
     </main>
   );
 }
@@ -2486,7 +2225,8 @@ function HomeView({
   onArchive,
   onProfile,
   onSea,
-  onSettings
+  onSettings,
+  onOpen
 }: {
   user: SessionUser;
   analyst: ReturnType<typeof getAnalyst>;
@@ -2499,42 +2239,54 @@ function HomeView({
   onProfile: () => void;
   onSea: () => void;
   onSettings: () => void;
+  onOpen: (record: DreamRecord) => void;
 }) {
   const latest = records[0];
+  const hour = new Date().getHours();
+  const greeting = hour < 6 ? "夜深了" : hour < 12 ? "早安" : hour < 18 ? "午后好" : "晚上好";
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - 6 + index);
+    const count = records.filter((record) => new Date(record.createdAt).toDateString() === date.toDateString()).length;
+    return { date, count };
+  });
 
   return (
-    <section className="dream-fade grid gap-8 xl:grid-cols-[minmax(0,1fr)_280px]">
-      <div className="space-y-6">
-        <section className="border-b border-[color:var(--dream-line)] py-3 pb-8 sm:py-7 sm:pb-10">
-          <p className="inline-flex items-center gap-2 text-sm dream-muted">
-            <Moon size={16} />
-            欢迎回来，{user.name}
-          </p>
-          <h2 className="mt-6 max-w-xl font-serif text-3xl font-medium leading-[1.5] dream-text sm:text-4xl sm:leading-[1.4]">
-            今晚，梦见了什么？
-          </h2>
-          <p className="mt-4 max-w-lg font-serif text-base leading-8 dream-muted sm:text-lg">
+    <section className="dream-fade home-layout">
+      <div className="min-w-0">
+        <section className="home-intro">
+          <div className="min-w-0">
+          <p className="inline-flex items-center gap-2 text-xs dream-muted"><span className="home-greeting-line" />{greeting}，{user.name}</p>
+          <h2 className="mt-5 font-serif text-3xl font-medium leading-[1.5] sm:text-4xl">把梦留在醒来之后。</h2>
+          <p className="mt-4 max-w-md text-sm leading-8 dream-muted">
             {hasDraft ? "那个还没说完的梦，仍然在这里等你。" : "不必急着解释。先让记忆停一停，写下醒来时还记得的片段。"}
           </p>
-          <div className="mt-7 flex flex-wrap gap-3 sm:mt-10">
+          <div className="mt-7 flex flex-wrap gap-3">
             <button type="button" onClick={onStart} className="primary-button">
-              <Feather size={16} />
-              {hasDraft ? "继续上次的梦" : "开始一次咨询"}
-            </button>
-            <button type="button" onClick={onArchive} className="quiet-button">
-              <Archive size={15} />
-              打开档案
+              <PenLine size={16} />{hasDraft ? "继续上次的梦" : "记录一个梦"}<ArrowRight size={15} />
             </button>
           </div>
+          </div>
+          {latest?.image ? <button type="button" className="home-dream-image" onClick={() => onOpen(latest)} aria-label={`打开梦境：${latest.analysis.title}`}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={latest.image.imageUrl} alt={latest.analysis.title} /><span>最近的梦境意象<ArrowRight size={13} /></span>
+          </button> : <div className="home-portraits" aria-label="三位梦境分析者">{analysts.map((person) => <div key={person.key}><Image src={person.portrait} alt={person.name} width={96} height={128} className="object-cover object-top grayscale" /><span>{person.name}</span></div>)}</div>}
         </section>
 
-        <section className="grid gap-4 md:grid-cols-3">
-          <HomeAction
-            icon={BookOpen}
-            title="最近一梦"
-            text={latest ? `${latest.analysis.title} / ${latest.analystName}` : "还没有留下第一场梦。"}
-            onClick={onArchive}
-          />
+        <section className="recent-dreams">
+          <div className="section-heading"><div><p className="section-eyebrow">DREAM JOURNAL</p><h2>最近留下的梦</h2></div><button type="button" className="text-link inline-flex items-center gap-2 text-xs" onClick={onArchive}>全部档案<ArrowRight size={14} /></button></div>
+          {records.length ? <div className="recent-dream-list">{records.slice(0, 3).map((record, index) => <button key={record.id} type="button" className="recent-dream-row" onClick={() => onOpen(record)}>
+            <span className="recent-dream-index">{String(records.length - index).padStart(2, "0")}</span>
+            <span className="recent-dream-thumbnail">{record.image ? <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={record.image.imageUrl} alt="" />
+            </> : <Image src={(getAnalyst(record.analystKey) || analysts[0]).portrait} alt="" fill sizes="64px" className="object-cover object-top grayscale" />}</span>
+            <span className="min-w-0 flex-1"><span className="block truncate font-serif text-lg">{record.analysis.title}</span><span className="mt-2 block line-clamp-1 text-xs leading-6 dream-muted">{record.dream.dreamText}</span><span className="mt-1 block text-xs dream-muted">{formatDateTime(record.createdAt)}<span className="mx-2">·</span>{record.analystName}</span></span>
+            <ArrowRight size={16} className="shrink-0 dream-muted" />
+          </button>)}</div> : <div className="journal-empty"><BookOpen size={26} strokeWidth={1.2} /><p className="font-serif text-xl">第一场梦，还没落笔</p><p className="text-sm leading-7 dream-muted">一段画面、一点余温，都可以成为开始。</p></div>}
+        </section>
+
+        <section className="grid gap-6 sm:grid-cols-2">
           <HomeAction
             icon={UserRound}
             title="内在画像"
@@ -2550,18 +2302,19 @@ function HomeView({
         </section>
       </div>
 
-      <aside className="space-y-5">
-        <section className="border-b border-[color:var(--dream-line)] pb-6 pt-3">
-          <p className="text-xs uppercase tracking-[0.24em] dream-muted">Quiet Status</p>
+      <aside className="home-aside">
+        <section className="home-side-section">
+          <div className="flex items-center justify-between gap-2"><p className="section-eyebrow">YOUR JOURNEY</p><CalendarDays size={15} className="dream-muted" /></div>
           <div className="mt-5 grid grid-cols-3 gap-2 sm:gap-3">
             <Stat label="梦" value={records.length.toString()} />
             <Stat label="问" value={totalQaCount.toString()} />
             <Stat label="母题" value={motifs.length.toString()} />
           </div>
+          <div className="dream-week" aria-label="最近七天的梦境记录">{days.map(({date,count}) => <div key={date.toDateString()} title={`${date.toLocaleDateString("zh-CN")}：${count} 个梦`}><span>{["日","一","二","三","四","五","六"][date.getDay()]}</span><span className={clsx("dream-week-day", count > 0 && "has-dream", date.toDateString() === new Date().toDateString() && "is-today")}>{date.getDate()}</span></div>)}</div>
         </section>
 
-        <section className="py-1">
-          <p className="text-xs uppercase tracking-[0.24em] dream-muted">Analyst</p>
+        <section className="home-side-section">
+          <p className="section-eyebrow">YOUR ANALYST</p>
           <div className="mt-4 flex items-center gap-3">
             <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full">
               <Image src={(analyst || analysts[0]).portrait} alt={(analyst || analysts[0]).name} fill sizes="56px" className="object-cover object-top grayscale" />
@@ -2572,6 +2325,8 @@ function HomeView({
             {analyst?.note || "你可以先进入选择室，从弗洛伊德、荣格、阿德勒中选一位陪你进入这次梦。"}
           </p>
         </section>
+
+        {motifs.length ? <section className="home-side-section"><p className="section-eyebrow">RECURRING MOTIFS</p><h3 className="mt-3 font-serif text-lg">反复出现的线索</h3><div className="mt-4 space-y-3">{motifs.slice(0,4).map(([motif,count]) => <div key={motif} className="flex items-center justify-between gap-3 text-sm dream-muted"><span>{motif}</span><span className="tabular-nums">{count}<span className="ml-1 text-xs">次</span></span></div>)}</div></section> : null}
 
         <button type="button" onClick={onSettings} className="quiet-button w-full justify-between">
           <span className="inline-flex items-center gap-2">
@@ -2631,28 +2386,30 @@ function ChooseAnalyst({
             type="button"
             onClick={() => onChoose(analyst.key)}
             className={clsx(
-              "group relative min-h-[420px] overflow-hidden text-left transition duration-300 hover:-translate-y-1 sm:min-h-[480px]",
-              "dream-panel",
-              selectedAnalyst === analyst.key && "shadow-[0_35px_100px_rgba(0,0,0,0.2)]"
+              "analyst-choice group",
+              selectedAnalyst === analyst.key && "is-selected"
             )}
+            aria-pressed={selectedAnalyst === analyst.key}
           >
+            <div className="analyst-choice-portrait">
             <Image
               src={analyst.portrait}
               alt={analyst.english}
               fill
               sizes="(min-width: 1024px) 33vw, 100vw"
-              className="absolute inset-0 h-full w-full object-cover object-top grayscale transition duration-700 group-hover:scale-105 group-hover:grayscale-[35%]"
+              className="object-cover object-top grayscale transition duration-700 group-hover:scale-[1.025]"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-neutral-950 via-neutral-950/42 to-neutral-200/10 transition duration-500 group-hover:from-neutral-950 group-hover:via-neutral-950/25" />
-            <div className="absolute inset-x-0 bottom-0 p-5 text-white sm:p-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-white/54">{analyst.english}</p>
-              <h2 className="mt-3 font-serif text-3xl font-semibold sm:text-4xl">{analyst.name}</h2>
-              <p className="mt-2 text-sm text-white/72">{analyst.title}</p>
-              <p className="mt-4 max-w-sm text-sm leading-7 text-white/72 opacity-80 transition group-hover:opacity-100 sm:mt-6">
+            {selectedAnalyst === analyst.key ? <span className="analyst-selected"><Check size={14} />当前分析者</span> : null}
+            </div>
+            <div className="analyst-choice-body">
+              <p className="text-[10px] dream-muted">{analyst.english}</p>
+              <h2 className="mt-2 font-serif text-2xl font-medium">{analyst.name}</h2>
+              <p className="mt-3 text-xs dream-glow-text">{analyst.title}</p>
+              <p className="mt-4 text-sm leading-7 dream-muted">
                 {analyst.note}
               </p>
-              <span className="mt-6 inline-flex items-center gap-2 text-sm font-medium text-white">
-                进入他的咨询室
+              <span className="analyst-choice-link">
+                进入咨询室
                 <ArrowRight size={16} className="transition group-hover:translate-x-1" />
               </span>
             </div>
@@ -2695,7 +2452,7 @@ function ConsultRoom({
         : "继续";
 
   return (
-    <section className="dream-panel-strong dream-fade lg:min-h-[calc(100vh-120px)]">
+    <section className="consultation-surface dream-fade">
       <div className="relative grid overflow-hidden lg:min-h-[calc(100vh-120px)] lg:grid-cols-[42%_1fr]">
         <div className="relative min-h-[260px] bg-[#0A1128]/60 sm:min-h-[340px] lg:min-h-[420px]">
           <Image
@@ -2723,7 +2480,7 @@ function ConsultRoom({
 
           <div className="my-6 max-w-3xl sm:my-8">
             <p className="text-sm dream-muted">{step.label}</p>
-            <p className="mt-5 font-serif text-3xl leading-[1.45] dream-text sm:text-4xl">{step.prompt}</p>
+            <p className="mt-5 font-serif text-2xl leading-[1.65] dream-text sm:text-3xl">{step.prompt}</p>
             {isAnalyzing ? (
               <p className="mt-5 text-sm leading-7 dream-muted">
                 正在整理五个追问和梦境材料，深度解析可能需要几十秒。页面保持打开就好。
@@ -2731,12 +2488,15 @@ function ConsultRoom({
             ) : null}
           </div>
 
-          <div className="dream-panel p-4 sm:p-6">
+          <div className="consult-answer">
+            {step.kind === "mood" ? <div className="mood-options" role="group" aria-label="醒后情绪">{["平静", "愉悦", "困惑", "不安", "失落", "释然"].map((mood) => <button key={mood} type="button" aria-pressed={answer.split("、").includes(mood)} disabled={isLoading} onClick={() => { const values = answer.split("、").filter(Boolean); onAnswer((values.includes(mood) ? values.filter((value) => value !== mood) : [...values, mood]).join("、")); }}>{mood}</button>)}</div> : null}
             {isLong ? (
               <textarea
                 value={answer}
                 onChange={(event) => onAnswer(event.target.value)}
                 className="soft-scrollbar min-h-32 w-full resize-y bg-transparent text-base leading-7 dream-text placeholder:text-white/30 sm:min-h-36"
+                aria-label={step.label}
+                disabled={isLoading}
                 placeholder={step.placeholder}
               />
             ) : (
@@ -2745,6 +2505,8 @@ function ConsultRoom({
                 onChange={(event) => onAnswer(event.target.value)}
                 className="min-h-12 w-full bg-transparent text-base dream-text placeholder:text-white/30"
                 placeholder={step.placeholder}
+                aria-label={step.label}
+                disabled={isLoading}
               />
             )}
 
@@ -2768,6 +2530,7 @@ function ConsultRoom({
                 {isAnalyzing ? "正在解析" : isLoading ? "请稍候" : buttonText}
               </button>
             </div>
+            <div className="consult-progress" role="progressbar" aria-label="咨询进度" aria-valuenow={stepIndex + 1} aria-valuemin={0} aria-valuemax={totalSteps}>{Array.from({length: totalSteps}, (_, index) => <span key={index} data-complete={index <= stepIndex} />)}</div>
           </div>
         </div>
       </div>
@@ -2809,7 +2572,7 @@ function AnalysisView({
 
   return (
     <section className="dream-fade grid gap-6 lg:grid-cols-[1fr_340px]">
-      <article className="dream-panel px-4 py-6 sm:px-10 sm:py-10">
+      <article className="reading-article">
         <p className="text-xs uppercase tracking-[0.28em] dream-muted">Dream Analysis / {analyst.name}</p>
         <h1 className="mt-4 font-serif text-4xl font-semibold leading-tight dream-text sm:text-5xl">{analysis.title}</h1>
         <p className="mt-5 font-serif text-lg leading-8 dream-muted sm:mt-6 sm:text-xl sm:leading-10">{analysis.opening}</p>
@@ -2981,9 +2744,9 @@ function LetterView({
         返回解析
       </button>
 
-      <article className="dream-panel px-4 py-6 sm:px-12 sm:py-12">
+      <article className="reading-article letter-paper">
         <div className="border-b border-[color:var(--dream-line)] pb-8">
-          <p className="text-xs uppercase tracking-[0.28em] dream-muted">A Private Letter / {analyst.name}</p>
+          <div className="flex items-center justify-between gap-3"><p className="text-xs uppercase tracking-[0.28em] dream-muted">A Private Letter / {analyst.name}</p><button type="button" className="icon-button" title="下载这封信" aria-label="下载这封信" onClick={() => downloadText(`${analysis.title}\n\n${getReadingLetter(analysis, user.name)}\n\n${analyst.name}\n\n${analysis.ritual}`, `idream-letter-${new Date().toISOString().slice(0,10)}.txt`)}><Download size={17} /></button></div>
           <h1 className="mt-4 font-serif text-4xl font-semibold leading-tight sm:text-5xl">{analysis.title}</h1>
           <p className="mt-4 text-sm dream-muted">{new Date().toLocaleDateString("zh-CN")}</p>
         </div>
@@ -3109,16 +2872,14 @@ function ArchiveView({
 }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("");
-  const filtered = records.filter((record) => (!filter || record.analystKey === filter) && `${record.analysis.title} ${record.dream.dreamText} ${record.dream.mood} ${record.analysis.motifs?.join(" ")}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const [sort, setSort] = useState("newest");
+  const filtered = records.filter((record) => (!filter || record.analystKey === filter) && `${record.analysis.title} ${record.dream.dreamText} ${record.dream.mood} ${record.analysis.motifs?.join(" ")}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())).sort((a, b) => sort === "oldest" ? Date.parse(a.createdAt) - Date.parse(b.createdAt) : Date.parse(b.createdAt) - Date.parse(a.createdAt));
   const visibleRecord = filtered.find((record) => record.id === selectedRecord?.id) || filtered[0] || null;
   return (
     <section className="dream-fade grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
       <aside className="border-b border-[color:var(--dream-line)] pb-6 xl:border-b-0 xl:border-r xl:pr-6">
         <p className="text-xs uppercase tracking-[0.24em] dream-muted">Archive</p>
         <h2 className="mt-3 font-serif text-2xl font-medium">梦境档案馆</h2>
-        <p className="mt-4 text-sm leading-7 dream-muted">
-          每次完整咨询都会留下记录。这里会慢慢看见反复出现的地点、人物、情绪和象征。
-        </p>
         <div className="mt-8 grid grid-cols-2 gap-3">
           <Stat label="梦境" value={records.length.toString()} />
           <Stat label="母题" value={motifs.length.toString()} />
@@ -3126,7 +2887,7 @@ function ArchiveView({
 
         <div className="relative mt-6"><Search size={16} className="pointer-events-none absolute left-3 top-4 dream-muted" /><input type="search" aria-label="搜索梦境档案" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索梦名、片段或母题" className="dream-input pl-10 text-sm" /></div>
         <select aria-label="按分析者筛选" value={filter} onChange={(event) => setFilter(event.target.value)} className="dream-input mt-3 text-sm"><option value="">全部分析者</option>{analysts.map((person) => <option key={person.key} value={person.key}>{person.name}</option>)}</select>
-        <p className="mt-4 text-xs dream-muted">{filtered.length} 个梦</p>
+        <div className="archive-sort"><span>{filtered.length} 个梦</span><select aria-label="档案排序" value={sort} onChange={(event) => setSort(event.target.value)}><option value="newest">最新在前</option><option value="oldest">最早在前</option></select></div>
 
         <div className="soft-scrollbar mt-6 max-h-72 space-y-2 overflow-y-auto pr-1 sm:max-h-[54vh]">
           {filtered.map((record) => (
@@ -3166,15 +2927,10 @@ function ArchiveView({
 
 function ArchiveDetail({ record, motifs, onOpen }: { record: DreamRecord; motifs: Array<[string, number]>; onOpen: () => void }) {
   function downloadRecord() {
-    const url = URL.createObjectURL(new Blob([JSON.stringify(record, null, 2)], { type: "application/json" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `idream-${record.createdAt.slice(0, 10)}.json`;
-    anchor.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadText(dreamAsMarkdown(record), `idream-${record.createdAt.slice(0, 10)}.md`);
   }
   return (
-    <article className="dream-panel px-4 py-6 sm:px-9 sm:py-9">
+    <article className="reading-article">
       <div className="flex flex-col gap-3 border-b border-[color:var(--dream-line)] pb-7 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">{record.analystName}</p>
@@ -3316,7 +3072,7 @@ function ProfileView({
 
   return (
     <section className="dream-fade grid gap-5 xl:grid-cols-[1fr_360px] xl:gap-6">
-      <article className="dream-panel p-4 sm:p-10">
+      <article className="reading-article">
         <p className="text-xs uppercase tracking-[0.24em] dream-muted">Inner Profile</p>
         <h1 className="mt-3 font-serif text-4xl font-semibold sm:text-5xl">我的内在画像</h1>
         <p className="mt-5 whitespace-pre-line text-base leading-8 dream-muted sm:mt-7">
@@ -3408,15 +3164,10 @@ function ProfileModule({ title, text }: { title: string; text: string }) {
 function SettingsView({
   user,
   theme,
-  soundOn,
-  soundscape,
-  volume,
+  audio,
   recordsCount,
   cloudMode,
   setTheme,
-  setSoundOn,
-  setSoundscape,
-  setVolume,
   exportArchive,
   clearMemory,
   deleteCloudMemory,
@@ -3424,15 +3175,10 @@ function SettingsView({
 }: {
   user: SessionUser;
   theme: ThemeMode;
-  soundOn: boolean;
-  soundscape: Soundscape;
-  volume: number;
+  audio: RoomAudioState;
   recordsCount: number;
   cloudMode: boolean;
   setTheme: (value: ThemeMode) => void;
-  setSoundOn: (value: boolean) => void;
-  setSoundscape: (value: Soundscape) => void;
-  setVolume: (value: number) => void;
   exportArchive: () => void;
   clearMemory: () => void;
   deleteCloudMemory: () => void;
@@ -3441,14 +3187,14 @@ function SettingsView({
   return (
     <section className="dream-fade grid gap-5 xl:grid-cols-[1fr_360px] xl:gap-6">
       <div className="space-y-6">
-        <section className="dream-panel p-4 sm:p-9">
+        <section className="settings-section">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Room Tone</p>
-          <h2 className="mt-3 font-serif text-3xl font-semibold sm:text-4xl">房间的光线</h2>
-          <div className="mt-7 flex flex-wrap gap-3">
+          <h2 className="mt-3 font-serif text-2xl font-medium">房间的光线</h2>
+          <div className="theme-options mt-7" role="group" aria-label="外观模式">
             <button
               type="button"
               onClick={() => setTheme("dark")}
-              className={clsx("quiet-button", theme === "dark" && "border-[color:var(--dream-glow)] text-[color:var(--dream-text)]")}
+              aria-pressed={theme === "dark"}
             >
               <Moon size={15} />
               黑色模式
@@ -3456,7 +3202,7 @@ function SettingsView({
             <button
               type="button"
               onClick={() => setTheme("light")}
-              className={clsx("quiet-button", theme === "light" && "border-[color:var(--dream-glow)] text-[color:var(--dream-text)]")}
+              aria-pressed={theme === "light"}
             >
               <Sun size={15} />
               白色模式
@@ -3464,22 +3210,15 @@ function SettingsView({
           </div>
         </section>
 
-        <SoundscapeControl
-          soundOn={soundOn}
-          soundscape={soundscape}
-          volume={volume}
-          setSoundOn={setSoundOn}
-          setSoundscape={setSoundscape}
-          setVolume={setVolume}
-        />
+        <section className="settings-section"><p className="section-eyebrow">ROOM MUSIC</p><h2 className="mt-3 font-serif text-2xl">房间里的旋律</h2><div className="mt-6 max-w-md"><MusicControls audio={audio} /></div></section>
 
-        <section className="dream-panel p-4 sm:p-9">
+        <section className="settings-section">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Privacy</p>
-          <h2 className="mt-3 font-serif text-3xl font-semibold sm:text-4xl">{cloudMode ? "账户与云端记忆" : "本地记忆"}</h2>
+          <h2 className="mt-3 font-serif text-2xl font-medium">{cloudMode ? "账户与云端记忆" : "本地记忆"}</h2>
           <p className="mt-5 max-w-2xl text-sm leading-7 dream-muted">
             {cloudMode
-              ? `当前账户：${user.email || user.name}。梦境档案会写入 Supabase，并由 RLS 权限隔离。`
-              : "当前未配置 Supabase，来访者信息、梦境档案和持续画像只保存在这个浏览器的 localStorage 中。"}
+              ? `当前账户：${user.email || user.name}。你的梦境档案和内在画像保存在私密账户中。`
+              : "你的梦境档案和内在画像保存在当前浏览器中。"}
           </p>
           <div className="mt-7 grid gap-3 sm:flex sm:flex-wrap">
             <button type="button" onClick={exportArchive} className="quiet-button">
@@ -3503,18 +3242,18 @@ function SettingsView({
           </div>
         </section>
 
-        <section className="dream-panel p-4 sm:p-9">
+        <section className="settings-section">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Data Boundary</p>
-          <h2 className="mt-3 font-serif text-3xl font-semibold">隐私与心理边界</h2>
+          <h2 className="mt-3 font-serif text-2xl font-medium">隐私与心理边界</h2>
           <div className="mt-5 grid gap-4 text-sm leading-7 dream-muted md:grid-cols-2">
-            <p>梦境和追问会被发送给 AI 服务生成回应；云端模式会把档案写入你的 Supabase 账户，本地模式只保存在当前浏览器。</p>
+            <p>梦境和追问会被发送给 AI 服务生成回应；账户中的档案仅供你本人访问，本地体验的记录只保存在当前浏览器。</p>
             <p>Idream 用于自我探索，不提供医学诊断、治疗建议或危机干预。若你正处于伤害自己或他人的风险中，请联系身边可信赖的人或当地紧急服务。</p>
           </div>
         </section>
       </div>
 
       <aside className="space-y-5">
-        <section className="dream-panel p-5 sm:p-6">
+        <section className="settings-section">
           <p className="text-xs uppercase tracking-[0.24em] dream-muted">Memory</p>
           <div className="mt-5 grid grid-cols-2 gap-3">
             <Stat label="档案" value={recordsCount.toString()} />
@@ -3522,12 +3261,6 @@ function SettingsView({
           </div>
         </section>
 
-        <section className="dream-panel p-5 sm:p-6">
-          <p className="text-xs uppercase tracking-[0.24em] dream-muted">Low Frequency</p>
-          <p className="mt-4 text-sm leading-7 dream-muted">
-            清空、导出、音景和主题都被放在设置里，主流程只保留咨询和回看，减少打扰。
-          </p>
-        </section>
       </aside>
     </section>
   );
