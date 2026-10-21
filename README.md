@@ -135,7 +135,19 @@ http://localhost:3000/**
 http://127.0.0.1:3000/**
 ```
 
-若正式域名不同，请替换上面的域名。密码登录、注册确认、邮件链接登录、重发确认邮件和找回密码均使用 Supabase Auth。邮件链接需在发起请求的浏览器中打开；找回密码会进入独立的密码重置页。
+若正式域名不同，请替换上面的域名。邮箱验证码登录、密码登录、注册确认、重发确认邮件和找回密码均使用 Supabase Auth。邮箱验证码直接在登录页面验证，无需在同一浏览器打开邮件链接；注册确认和密码重置仍使用邮件链接，找回密码会进入独立的密码重置页。
+
+### 邮箱验证码登录
+
+发布验证码登录前，先在 Supabase 的 Authentication -> Email（部分界面位于 Notifications 下）-> Templates -> Magic Link 更新登录邮件模板：
+
+1. Subject 填写 `Idream 登录验证码`。
+2. Body 替换为 [`supabase/templates/login-code.html`](supabase/templates/login-code.html) 的完整内容，保存。
+3. 确认模板保留 `{{ .Token }}`，用于显示数字验证码。仅包含 `{{ .ConfirmationURL }}` 的旧模板只会发送链接。
+4. 在 Email provider 设置中检查 OTP expiration，建议使用 600 秒，并沿用项目的验证码长度；前端支持 6 到 10 位数字。
+5. 在正式网站用已注册邮箱获取验证码，将邮件中的数字输入登录页，确认可以登录。重新发送需间隔至少 60 秒；后端还会执行 Supabase 自身的频率限制。
+
+验证码请求使用 `shouldCreateUser: false`，新用户仍通过注册入口建立账户。验证码只通过 Supabase Auth 验证，不会存入本地档案或发送到应用日志。密码登录作为备用入口保留。
 
 Supabase 默认邮件服务可能限制收件人为项目团队成员，并且发送额度较低。面向真实用户开放前，应在 Authentication 的邮件设置中配置自己的 SMTP 服务，然后用自己的邮箱验证注册、登录和找回密码的完整流程。
 

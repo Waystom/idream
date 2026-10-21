@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { verifyEmailLink } from "../lib/auth-confirm";
 import { authDestination, authErrorMessage } from "../lib/auth-messages";
 import { resolveSupabaseConfig } from "../lib/supabase/config";
+import { requestEmailCode, verifyEmailCode } from "../lib/auth-otp";
 
 function authFixture(overrides = {}) {
   return {
@@ -44,4 +45,56 @@ test("blank and example Supabase values keep local mode available", () => {
   assert.equal(resolveSupabaseConfig("https://your-project.supabase.co", "your_supabase_anon_key"), null);
   assert.equal(resolveSupabaseConfig("not-a-url", "test-key"), null);
   assert.deepEqual(resolveSupabaseConfig("https://example.supabase.co/", "test-key"), { url: "https://example.supabase.co", key: "test-key" });
+});
+
+test("email code requests do not create accounts or require a redirect URL", async () => {
+  let request: unknown;
+  const auth = authFixture({ signInWithOtp: async (params: unknown) => { request = params; return { error: null }; } });
+  await requestEmailCode(auth, " reader@example.com ");
+  assert.deepEqual(request, { email: "reader@example.com", options: { shouldCreateUser: false } });
+  await assert.rejects(requestEmailCode(authFixture({ signInWithOtp: async () => ({ error: new Error("rate limit") }) }), "reader@example.com"), /rate limit/);
+});
+
+test("email codes establish a session without an original browser's PKCE state", async () => {
+  const user = { id: "email-code-user", email: "reader@example.com" };
+  const requests: unknown[] = [];
+  const auth = authFixture({
+    exchangeCodeForSession: async () => { throw new Error("PKCE state must not be needed"); },
+    verifyOtp: async (params: unknown) => {
+      requests.push(params);
+      return { data: { user, session: { user, access_token: "test-session" } }, error: null };
+    }
+  });
+  assert.equal(await verifyEmailCode(auth, " reader@example.com ", " 012345 "), user);
+  assert.equal(await verifyEmailCode(auth, "reader@example.com", "01234567"), user);
+  assert.deepEqual(requests, [
+    { email: "reader@example.com", token: "012345", type: "email" },
+    { email: "reader@example.com", token: "01234567", type: "email" }
+  ]);
+});
+
+test("invalid email and incomplete codes do not reach the auth service", async () => {
+  const auth = authFixture({
+    signInWithOtp: async () => { assert.fail("invalid email must not be sent"); },
+    verifyOtp: async () => { assert.fail("invalid code must not be sent"); }
+  });
+  await assert.rejects(requestEmailCode(auth, "not-an-email"), /邮箱/);
+  for (const code of ["", "12345", "12345678901", "12345a"]) {
+    await assert.rejects(verifyEmailCode(auth, "reader@example.com", code), /验证码/);
+  }
+});
+
+test("expired codes and missing sessions never report a successful login", async () => {
+  const email = "reader@example.com";
+  const expired = new Error("Token has expired or is invalid");
+  await assert.rejects(verifyEmailCode(authFixture({ verifyOtp: async () => ({ error: expired }) }), email, "012345"), /expired/);
+  assert.match(authErrorMessage(expired, "otp"), /验证码不正确或已过期/);
+  assert.doesNotMatch(authErrorMessage(expired, "otp"), /链接/);
+  for (const data of [
+    { user: { id: "user" }, session: null },
+    { user: null, session: { user: { id: "user" } } },
+    { user: { id: "other" }, session: { user: { id: "user" } } }
+  ]) {
+    await assert.rejects(verifyEmailCode(authFixture({ verifyOtp: async () => ({ data, error: null }) }), email, "012345"), /登录状态/);
+  }
 });

@@ -39,6 +39,7 @@ import { getSupabaseBrowserClient, hasSupabaseBrowserEnv } from "@/lib/supabase/
 import type { AdminStats, BottleStatus, DreamRecordRow, DriftBottleRow, ProfileRow, ProfileSnapshotRow, UserRole } from "@/lib/database";
 import type { AnalystKey, DreamAnalysis, FollowupQuestions, GeneratedImage, QuestionAnswer } from "@/lib/types";
 import { authErrorMessage } from "@/lib/auth-messages";
+import { requestEmailCode, verifyEmailCode } from "@/lib/auth-otp";
 import { dreamAsMarkdown } from "@/lib/dream-export";
 import { MusicControls, RoomAudioMenu, useRoomAudio, type RoomAudioState } from "@/components/room-audio";
 
@@ -59,7 +60,7 @@ type DreamDraft = {
 
 type Stage = "home" | "choose" | "consult" | "analysis" | "inner" | "archive" | "profile" | "settings" | "letter" | "sea" | "admin";
 type ThemeMode = "dark" | "light";
-type AuthMode = "signin" | "signup" | "magiclink" | "reset" | "resend";
+type AuthMode = "signin" | "signup" | "otp" | "reset" | "resend";
 type AnalysisFeedback = "hit" | "miss" | "unsure";
 
 type NavItem = {
@@ -371,7 +372,8 @@ export default function Home() {
   const [loginIntention, setLoginIntention] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [authMode, setAuthMode] = useState<AuthMode>("signin");
+  const [loginCode, setLoginCode] = useState("");
+  const [authMode, setAuthMode] = useState<AuthMode>("otp");
   const [authReady, setAuthReady] = useState(!supabaseEnabled);
   const [stage, setStage] = useState<Stage>("home");
   const [theme, setTheme] = useState<ThemeMode>("dark");
@@ -700,8 +702,35 @@ export default function Home() {
     };
   }, [hydrateCloudUser, supabaseEnabled]);
 
+  async function sendLoginCode() {
+    if (isAuthenticating) return false;
+    setError("");
+    setAuthNotice("");
+    if (signupCooldownRemainingSeconds > 0) {
+      setError(`邮件已发送，请 ${signupCooldownRemainingSeconds} 秒后再试。`);
+      return false;
+    }
+    setIsAuthenticating(true);
+    try {
+      await requestEmailCode(getSupabaseBrowserClient().auth, loginEmail);
+      const cooldownUntil = Date.now() + signupCooldownMs;
+      setNowMs(Date.now());
+      setSignupCooldownUntil(cooldownUntil);
+      window.localStorage.setItem(signupCooldownKey, String(cooldownUntil));
+      setLoginCode("");
+      setAuthNotice("验证码已发送，请查看收件箱或垃圾邮件。输入最新一封邮件中的验证码即可登录。");
+      return true;
+    } catch (caught) {
+      setError(authErrorMessage(caught, "otp"));
+      return false;
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }
+
   async function enterRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isAuthenticating) return;
 
     if (supabaseEnabled) {
       setIsAuthenticating(true);
@@ -715,17 +744,24 @@ export default function Home() {
 
         if (!email) throw new Error("请填写邮箱地址。");
 
+        if (authMode === "otp") {
+          const authUser = await verifyEmailCode(supabase.auth, email, loginCode);
+          setLoginCode("");
+          await hydrateCloudUser(authUser);
+          setAuthNotice("登录成功，正在进入中庭。");
+          setStage("home");
+          return;
+        }
+
         if (authMode !== "signin" && signupCooldownRemainingSeconds > 0) {
           throw new Error(`邮件已发送，请 ${signupCooldownRemainingSeconds} 秒后再试。`);
         }
 
         const redirectTo = `${window.location.origin}/auth/confirm`;
-        if (authMode === "magiclink" || authMode === "reset" || authMode === "resend") {
+        if (authMode === "reset" || authMode === "resend") {
           const result = authMode === "reset"
             ? await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${redirectTo}?next=/auth/reset-password` })
-            : authMode === "resend"
-              ? await supabase.auth.resend({ type: "signup", email, options: { emailRedirectTo: redirectTo } })
-              : await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo, shouldCreateUser: false } });
+            : await supabase.auth.resend({ type: "signup", email, options: { emailRedirectTo: redirectTo } });
           if (result.error) throw result.error;
           const cooldownUntil = Date.now() + signupCooldownMs;
           setNowMs(Date.now());
@@ -767,7 +803,7 @@ export default function Home() {
 
         if (!authUser) {
           setAuthNotice("注册请求已发送。请打开邮箱确认链接；确认成功后会回到登录页。短时间内只支持提交一次注册。");
-          setAuthMode("signin");
+          setAuthMode("otp");
           setLoginPassword("");
           return;
         }
@@ -783,7 +819,7 @@ export default function Home() {
         setAuthNotice(authMode === "signup" ? "注册成功，正在进入中庭。" : "登录成功，正在进入中庭。");
         setStage("home");
       } catch (caught) {
-        setError(authErrorMessage(caught));
+        setError(authErrorMessage(caught, authMode === "otp" ? "otp" : "link"));
       } finally {
         setIsAuthenticating(false);
       }
@@ -806,6 +842,9 @@ export default function Home() {
     }
 
     setUser(null);
+    setLoginCode("");
+    setLoginPassword("");
+    setAuthMode("otp");
     setRecords([]);
     setProfileSnapshots([]);
     setProfile("");
@@ -1632,6 +1671,7 @@ export default function Home() {
         authMode={authMode}
         loginEmail={loginEmail}
         loginPassword={loginPassword}
+        loginCode={loginCode}
         loginName={loginName}
         loginIntention={loginIntention}
         isAuthenticating={isAuthenticating}
@@ -1639,9 +1679,11 @@ export default function Home() {
         error={error}
         notice={authNotice}
         setTheme={setTheme}
-        setAuthMode={(mode) => { setAuthMode(mode); setError(""); setAuthNotice(""); setLoginPassword(""); }}
-        setLoginEmail={setLoginEmail}
+        setAuthMode={(mode) => { if (isAuthenticating) return; setAuthMode(mode); setError(""); setAuthNotice(""); setLoginPassword(""); setLoginCode(""); }}
+        setLoginEmail={(email) => { setLoginEmail(email); setLoginCode(""); setError(""); setAuthNotice(""); }}
         setLoginPassword={setLoginPassword}
+        setLoginCode={setLoginCode}
+        sendLoginCode={sendLoginCode}
         setLoginName={setLoginName}
         setLoginIntention={setLoginIntention}
         enterRoom={enterRoom}
@@ -1846,6 +1888,7 @@ function AuthScreen({
   authMode,
   loginEmail,
   loginPassword,
+  loginCode,
   loginName,
   loginIntention,
   isAuthenticating,
@@ -1856,6 +1899,8 @@ function AuthScreen({
   setAuthMode,
   setLoginEmail,
   setLoginPassword,
+  setLoginCode,
+  sendLoginCode,
   setLoginName,
   setLoginIntention,
   enterRoom
@@ -1865,6 +1910,7 @@ function AuthScreen({
   authMode: AuthMode;
   loginEmail: string;
   loginPassword: string;
+  loginCode: string;
   loginName: string;
   loginIntention: string;
   isAuthenticating: boolean;
@@ -1875,15 +1921,19 @@ function AuthScreen({
   setAuthMode: (value: AuthMode) => void;
   setLoginEmail: (value: string) => void;
   setLoginPassword: (value: string) => void;
+  setLoginCode: (value: string) => void;
+  sendLoginCode: () => Promise<boolean>;
   setLoginName: (value: string) => void;
   setLoginIntention: (value: string) => void;
   enterRoom: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const isSignup = authMode === "signup";
-  const emailOnly = authMode === "magiclink" || authMode === "reset" || authMode === "resend";
-  const signupCoolingDown = authMode !== "signin" && signupCooldownSeconds > 0;
+  const isOtp = supabaseEnabled && authMode === "otp";
+  const emailOnly = isOtp || authMode === "reset" || authMode === "resend";
+  const signupCoolingDown = authMode !== "signin" && !isOtp && signupCooldownSeconds > 0;
   const [showPassword, setShowPassword] = useState(false);
-  const titles: Record<AuthMode, string> = { signin: "回到你的房间", signup: "留一间房给自己", magiclink: "用邮件轻轻敲门", reset: "找回你的密码", resend: "重新确认邮箱" };
+  const codeInput = useRef<HTMLInputElement>(null);
+  const titles: Record<AuthMode, string> = { signin: "回到你的房间", signup: "留一间房给自己", otp: "回到你的房间", reset: "找回你的密码", resend: "重新确认邮箱" };
 
   return (
     <main className="dream-shell auth-shell">
@@ -1926,7 +1976,7 @@ function AuthScreen({
                   ? signupCoolingDown
                     ? "注册邮件已经发出。请先去邮箱确认，短时间内只支持提交一次注册。"
                     : "注册后，梦境档案会保存到你的私密账户。"
-                  : authMode === "magiclink" ? "我们会寄给你一封登录邮件，无需输入密码。"
+                  : isOtp ? "用邮箱验证码，回到你的私密梦境档案。"
                     : authMode === "reset" ? "输入注册邮箱，接收重置密码的邮件。"
                       : authMode === "resend" ? "重新接收注册时的邮箱确认链接。"
                         : "你的梦与思绪，都在这里等你。"
@@ -1947,11 +1997,12 @@ function AuthScreen({
               </div>
             ) : null}
 
-            {supabaseEnabled && !emailOnly ? (
+            {supabaseEnabled && (!emailOnly || isOtp) ? (
               <div className="segmented-control mt-6 grid grid-cols-2 gap-1" role="group" aria-label="账户方式">
                 <button
                   type="button"
-                  onClick={() => setAuthMode("signin")}
+                  onClick={() => setAuthMode("otp")}
+                  disabled={isAuthenticating}
                   aria-pressed={!isSignup}
                   className={clsx("min-h-10 px-3 text-sm transition", !isSignup ? "bg-[color:var(--dream-glow)] text-[#0A1128]" : "dream-muted hover:text-[color:var(--dream-text)]")}
                 >
@@ -1960,6 +2011,7 @@ function AuthScreen({
                 <button
                   type="button"
                   onClick={() => setAuthMode("signup")}
+                  disabled={isAuthenticating}
                   aria-pressed={isSignup}
                   className={clsx("min-h-10 px-3 text-sm transition", isSignup ? "bg-[color:var(--dream-glow)] text-[#0A1128]" : "dream-muted hover:text-[color:var(--dream-text)]")}
                 >
@@ -1978,11 +2030,41 @@ function AuthScreen({
                     autoComplete="email"
                     autoCapitalize="none"
                     value={loginEmail}
+                    disabled={isAuthenticating}
                     onChange={(event) => setLoginEmail(event.target.value)}
                     className="dream-input mt-2"
                     placeholder="you@example.com"
                   />
                 </QuietField>
+
+                {isOtp ? <div>
+                  <label className="field-label" htmlFor="email-code">验证码</label>
+                  <div className="auth-code-row mt-2">
+                    <input
+                      ref={codeInput}
+                      id="email-code"
+                      name="one-time-code"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      required
+                      minLength={6}
+                      maxLength={10}
+                      pattern="[0-9]{6,10}"
+                      value={loginCode}
+                      onChange={(event) => setLoginCode(event.target.value.replace(/\D/g, ""))}
+                      disabled={isAuthenticating}
+                      className="dream-input"
+                      placeholder="输入验证码"
+                    />
+                    <button
+                      type="button"
+                      disabled={isAuthenticating || signupCooldownSeconds > 0 || !loginEmail.trim()}
+                      onClick={async () => { if (await sendLoginCode()) requestAnimationFrame(() => codeInput.current?.focus()); }}
+                      className="quiet-button"
+                    >{signupCooldownSeconds > 0 ? `${signupCooldownSeconds} 秒后重发` : "获取验证码"}</button>
+                  </div>
+                </div> : null}
 
                 {!emailOnly ? <QuietField label="密码" htmlFor="password">
                   <div className="relative mt-2"><input
@@ -2038,6 +2120,7 @@ function AuthScreen({
                   ? "请稍候"
                   : signupCoolingDown
                     ? `${signupCooldownSeconds} 秒后可重新发送`
+                    : isOtp ? "验证并登录"
                     : emailOnly ? "发送邮件"
                     : supabaseEnabled
                       ? isSignup
@@ -2048,8 +2131,8 @@ function AuthScreen({
             </button>
 
             {supabaseEnabled ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs">
-              {emailOnly ? <button type="button" onClick={() => setAuthMode("signin")} className="text-link inline-flex items-center gap-1"><ArrowLeft size={14} />返回密码登录</button> : <>
-                <button type="button" onClick={() => setAuthMode("magiclink")} className="text-link inline-flex items-center gap-1"><Mail size={14} />邮件链接登录</button>
+              {emailOnly && !isOtp ? <button type="button" onClick={() => setAuthMode("otp")} className="text-link inline-flex items-center gap-1"><ArrowLeft size={14} />返回登录</button> : <>
+                <button type="button" onClick={() => setAuthMode(isOtp ? "signin" : "otp")} className="text-link inline-flex items-center gap-1">{isOtp ? <LockKeyhole size={14} /> : <Mail size={14} />}{isOtp ? "密码登录" : "验证码登录"}</button>
                 <button type="button" onClick={() => setAuthMode(isSignup ? "resend" : "reset")} className="text-link">{isSignup ? "重发确认邮件" : "忘记密码？"}</button>
               </>}
             </div> : null}
