@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { verifyEmailLink } from "../lib/auth-confirm";
 import { authDestination, authErrorMessage } from "../lib/auth-messages";
 import { resolveSupabaseConfig } from "../lib/supabase/config";
-import { requestEmailCode, verifyEmailCode } from "../lib/auth-otp";
+import { requestEmailCode, requestSignupCode, resendSignupCode, verifyEmailCode } from "../lib/auth-otp";
 
 function authFixture(overrides = {}) {
   return {
@@ -53,6 +53,45 @@ test("email code requests do not create accounts or require a redirect URL", asy
   await requestEmailCode(auth, " reader@example.com ");
   assert.deepEqual(request, { email: "reader@example.com", options: { shouldCreateUser: false } });
   await assert.rejects(requestEmailCode(authFixture({ signInWithOtp: async () => ({ error: new Error("rate limit") }) }), "reader@example.com"), /rate limit/);
+});
+
+test("signup sends a confirmation code with password and profile metadata, without requiring a redirect", async () => {
+  let request: unknown;
+  const auth = authFixture({
+    signUp: async (params: unknown) => {
+      request = params;
+      return { data: { user: { id: "pending-user", identities: [{ id: "email" }] }, session: null }, error: null };
+    }
+  });
+  const user = await requestSignupCode(auth, " new@example.com ", "test-password", { displayName: " Dreamer ", intention: " Reflect " });
+  assert.equal(user, null);
+  assert.deepEqual(request, {
+    email: "new@example.com",
+    password: "test-password",
+    options: { data: { display_name: "Dreamer", intention: "Reflect" } }
+  });
+});
+
+test("signup validates input and surfaces duplicate accounts and provider errors", async () => {
+  const profile = { displayName: "", intention: "" };
+  const noRequest = authFixture({ signUp: async () => { assert.fail("invalid input must not be sent"); } });
+  await assert.rejects(requestSignupCode(noRequest, "invalid", "test-password", profile), /邮箱/);
+  await assert.rejects(requestSignupCode(noRequest, "new@example.com", "short", profile), /至少 8 位/);
+  await assert.rejects(requestSignupCode(authFixture({ signUp: async () => ({ data: { user: { identities: [] }, session: null }, error: null }) }), "existing@example.com", "test-password", profile), /已注册/);
+  await assert.rejects(requestSignupCode(authFixture({ signUp: async () => ({ error: new Error("rate limit") }) }), "new@example.com", "test-password", profile), /rate limit/);
+});
+
+test("resending signup codes confirms an existing pending account without repeating signup", async () => {
+  let request: unknown;
+  const auth = authFixture({
+    signUp: async () => { assert.fail("resending must not create an account"); },
+    resend: async (params: unknown) => { request = params; return { error: null }; }
+  });
+  await resendSignupCode(auth, " new@example.com ");
+  assert.deepEqual(request, { type: "signup", email: "new@example.com" });
+  await assert.rejects(resendSignupCode(auth, "invalid"), /邮箱/);
+  await assert.rejects(resendSignupCode(authFixture({ resend: async () => ({ error: new Error("rate limit") }) }), "new@example.com"), /rate limit/);
+  assert.match(authErrorMessage(new Error("Email not confirmed")), /注册页获取验证码/);
 });
 
 test("email codes establish a session without an original browser's PKCE state", async () => {

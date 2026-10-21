@@ -14,6 +14,31 @@ export async function requestEmailCode(auth: SupabaseClient["auth"], email: stri
   if (error) throw error;
 }
 
+export async function requestSignupCode(
+  auth: SupabaseClient["auth"],
+  email: string,
+  password: string,
+  profile: { displayName: string; intention: string }
+) {
+  const normalizedEmail = normalizeEmail(email);
+  if (password.length < 8) throw new Error("请设置至少 8 位密码。");
+  const { data, error } = await auth.signUp({
+    email: normalizedEmail,
+    password,
+    options: {
+      data: { display_name: profile.displayName.trim() || "来访者", intention: profile.intention.trim() }
+    }
+  });
+  if (error) throw error;
+  if (data.user?.identities?.length === 0) throw new Error("这个邮箱已注册，请直接登录或找回密码。");
+  return data.session?.user || null;
+}
+
+export async function resendSignupCode(auth: SupabaseClient["auth"], email: string) {
+  const { error } = await auth.resend({ type: "signup", email: normalizeEmail(email) });
+  if (error) throw error;
+}
+
 export async function verifyEmailCode(auth: SupabaseClient["auth"], email: string, token: string) {
   const normalizedEmail = normalizeEmail(email);
   const code = token.trim();

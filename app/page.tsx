@@ -39,7 +39,7 @@ import { getSupabaseBrowserClient, hasSupabaseBrowserEnv } from "@/lib/supabase/
 import type { AdminStats, BottleStatus, DreamRecordRow, DriftBottleRow, ProfileRow, ProfileSnapshotRow, UserRole } from "@/lib/database";
 import type { AnalystKey, DreamAnalysis, FollowupQuestions, GeneratedImage, QuestionAnswer } from "@/lib/types";
 import { authErrorMessage } from "@/lib/auth-messages";
-import { requestEmailCode, verifyEmailCode } from "@/lib/auth-otp";
+import { requestEmailCode, requestSignupCode, resendSignupCode, verifyEmailCode } from "@/lib/auth-otp";
 import { dreamAsMarkdown } from "@/lib/dream-export";
 import { MusicControls, RoomAudioMenu, useRoomAudio, type RoomAudioState } from "@/components/room-audio";
 
@@ -60,7 +60,7 @@ type DreamDraft = {
 
 type Stage = "home" | "choose" | "consult" | "analysis" | "inner" | "archive" | "profile" | "settings" | "letter" | "sea" | "admin";
 type ThemeMode = "dark" | "light";
-type AuthMode = "signin" | "signup" | "otp" | "reset" | "resend";
+type AuthMode = "signin" | "signup" | "otp" | "reset";
 type AnalysisFeedback = "hit" | "miss" | "unsure";
 
 type NavItem = {
@@ -373,6 +373,7 @@ export default function Home() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginCode, setLoginCode] = useState("");
+  const [pendingSignupEmail, setPendingSignupEmail] = useState("");
   const [authMode, setAuthMode] = useState<AuthMode>("otp");
   const [authReady, setAuthReady] = useState(!supabaseEnabled);
   const [stage, setStage] = useState<Stage>("home");
@@ -702,7 +703,7 @@ export default function Home() {
     };
   }, [hydrateCloudUser, supabaseEnabled]);
 
-  async function sendLoginCode() {
+  async function sendAuthCode() {
     if (isAuthenticating) return false;
     setError("");
     setAuthNotice("");
@@ -712,13 +713,20 @@ export default function Home() {
     }
     setIsAuthenticating(true);
     try {
-      await requestEmailCode(getSupabaseBrowserClient().auth, loginEmail);
+      const auth = getSupabaseBrowserClient().auth;
+      if (authMode === "signup" && pendingSignupEmail) {
+        await resendSignupCode(auth, pendingSignupEmail);
+      } else {
+        await requestEmailCode(auth, loginEmail);
+      }
       const cooldownUntil = Date.now() + signupCooldownMs;
       setNowMs(Date.now());
       setSignupCooldownUntil(cooldownUntil);
       window.localStorage.setItem(signupCooldownKey, String(cooldownUntil));
       setLoginCode("");
-      setAuthNotice("验证码已发送，请查看收件箱或垃圾邮件。输入最新一封邮件中的验证码即可登录。");
+      setAuthNotice(authMode === "signup"
+        ? "注册验证码已发送，请查看收件箱或垃圾邮件，输入最新一封邮件中的数字完成注册。"
+        : "验证码已发送，请查看收件箱或垃圾邮件。输入最新一封邮件中的验证码即可登录。");
       return true;
     } catch (caught) {
       setError(authErrorMessage(caught, "otp"));
@@ -744,11 +752,12 @@ export default function Home() {
 
         if (!email) throw new Error("请填写邮箱地址。");
 
-        if (authMode === "otp") {
-          const authUser = await verifyEmailCode(supabase.auth, email, loginCode);
+        if (authMode === "otp" || (authMode === "signup" && pendingSignupEmail)) {
+          const authUser = await verifyEmailCode(supabase.auth, pendingSignupEmail && authMode === "signup" ? pendingSignupEmail : email, loginCode);
           setLoginCode("");
+          setPendingSignupEmail("");
           await hydrateCloudUser(authUser);
-          setAuthNotice("登录成功，正在进入中庭。");
+          setAuthNotice(authMode === "signup" ? "注册成功，正在进入中庭。" : "登录成功，正在进入中庭。");
           setStage("home");
           return;
         }
@@ -758,68 +767,49 @@ export default function Home() {
         }
 
         const redirectTo = `${window.location.origin}/auth/confirm`;
-        if (authMode === "reset" || authMode === "resend") {
-          const result = authMode === "reset"
-            ? await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${redirectTo}?next=/auth/reset-password` })
-            : await supabase.auth.resend({ type: "signup", email, options: { emailRedirectTo: redirectTo } });
+        if (authMode === "reset") {
+          const result = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${redirectTo}?next=/auth/reset-password` });
           if (result.error) throw result.error;
           const cooldownUntil = Date.now() + signupCooldownMs;
           setNowMs(Date.now());
           setSignupCooldownUntil(cooldownUntil);
           window.localStorage.setItem(signupCooldownKey, String(cooldownUntil));
-          setAuthNotice(authMode === "reset" ? "如果这个邮箱已注册，你会收到重置密码的邮件。" : "邮件已发送，请检查收件箱和垃圾邮件，并在当前浏览器打开链接。");
+          setAuthNotice("如果这个邮箱已注册，你会收到重置密码的邮件。");
           return;
         }
 
         if (password.length < (authMode === "signup" ? 8 : 6)) throw new Error(authMode === "signup" ? "请设置至少 8 位密码。" : "请填写密码（至少 6 位）。");
 
-        const result =
-          authMode === "signup"
-            ? await supabase.auth.signUp({
-                email,
-                password,
-                options: {
-                  emailRedirectTo: redirectTo,
-                  data: {
-                    display_name: loginName.trim() || "来访者",
-                    intention: loginIntention.trim()
-                  }
-                }
-              })
-            : await supabase.auth.signInWithPassword({ email, password });
-
-        if (result.error) {
-          throw result.error;
-        }
-
         if (authMode === "signup") {
+          const authUser = await requestSignupCode(supabase.auth, email, password, {
+            displayName: loginName,
+            intention: loginIntention
+          });
           const nextCooldownUntil = Date.now() + signupCooldownMs;
           setNowMs(Date.now());
           setSignupCooldownUntil(nextCooldownUntil);
           window.localStorage.setItem(signupCooldownKey, String(nextCooldownUntil));
-        }
-
-        const authUser = result.data.session?.user || (authMode === "signin" ? result.data.user : null);
-
-        if (!authUser) {
-          setAuthNotice("注册请求已发送。请打开邮箱确认链接；确认成功后会回到登录页。短时间内只支持提交一次注册。");
-          setAuthMode("otp");
           setLoginPassword("");
+          setLoginCode("");
+          if (!authUser) {
+            setPendingSignupEmail(email);
+            setAuthNotice("注册验证码已发送，请查看收件箱或垃圾邮件，输入最新一封邮件中的数字完成注册。");
+            return;
+          }
+          await hydrateCloudUser(authUser);
+          setAuthNotice("注册成功，正在进入中庭。");
+          setStage("home");
           return;
         }
 
-        await hydrateCloudUser(authUser);
-        if (authMode === "signup") {
-          await syncProfile({
-            displayName: loginName.trim() || "来访者",
-            intention: loginIntention.trim(),
-            psychologicalProfile: profile
-          });
-        }
-        setAuthNotice(authMode === "signup" ? "注册成功，正在进入中庭。" : "登录成功，正在进入中庭。");
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInError) throw signInError;
+        if (!data.session?.user) throw new Error("未能确认登录状态，请重新登录。");
+        await hydrateCloudUser(data.session.user);
+        setAuthNotice("登录成功，正在进入中庭。");
         setStage("home");
       } catch (caught) {
-        setError(authErrorMessage(caught, authMode === "otp" ? "otp" : "link"));
+        setError(authErrorMessage(caught, authMode === "otp" || authMode === "signup" ? "otp" : "link"));
       } finally {
         setIsAuthenticating(false);
       }
@@ -843,6 +833,7 @@ export default function Home() {
 
     setUser(null);
     setLoginCode("");
+    setPendingSignupEmail("");
     setLoginPassword("");
     setAuthMode("otp");
     setRecords([]);
@@ -1672,6 +1663,7 @@ export default function Home() {
         loginEmail={loginEmail}
         loginPassword={loginPassword}
         loginCode={loginCode}
+        signupCodeSent={Boolean(pendingSignupEmail)}
         loginName={loginName}
         loginIntention={loginIntention}
         isAuthenticating={isAuthenticating}
@@ -1680,10 +1672,11 @@ export default function Home() {
         notice={authNotice}
         setTheme={setTheme}
         setAuthMode={(mode) => { if (isAuthenticating) return; setAuthMode(mode); setError(""); setAuthNotice(""); setLoginPassword(""); setLoginCode(""); }}
-        setLoginEmail={(email) => { setLoginEmail(email); setLoginCode(""); setError(""); setAuthNotice(""); }}
+        setLoginEmail={(email) => { setLoginEmail(email); setPendingSignupEmail(""); setLoginCode(""); setError(""); setAuthNotice(""); }}
         setLoginPassword={setLoginPassword}
         setLoginCode={setLoginCode}
-        sendLoginCode={sendLoginCode}
+        sendAuthCode={sendAuthCode}
+        restartSignup={() => { setPendingSignupEmail(""); setLoginPassword(""); setLoginCode(""); setError(""); setAuthNotice(""); }}
         setLoginName={setLoginName}
         setLoginIntention={setLoginIntention}
         enterRoom={enterRoom}
@@ -1889,6 +1882,7 @@ function AuthScreen({
   loginEmail,
   loginPassword,
   loginCode,
+  signupCodeSent,
   loginName,
   loginIntention,
   isAuthenticating,
@@ -1900,7 +1894,8 @@ function AuthScreen({
   setLoginEmail,
   setLoginPassword,
   setLoginCode,
-  sendLoginCode,
+  sendAuthCode,
+  restartSignup,
   setLoginName,
   setLoginIntention,
   enterRoom
@@ -1911,6 +1906,7 @@ function AuthScreen({
   loginEmail: string;
   loginPassword: string;
   loginCode: string;
+  signupCodeSent: boolean;
   loginName: string;
   loginIntention: string;
   isAuthenticating: boolean;
@@ -1922,18 +1918,23 @@ function AuthScreen({
   setLoginEmail: (value: string) => void;
   setLoginPassword: (value: string) => void;
   setLoginCode: (value: string) => void;
-  sendLoginCode: () => Promise<boolean>;
+  sendAuthCode: () => Promise<boolean>;
+  restartSignup: () => void;
   setLoginName: (value: string) => void;
   setLoginIntention: (value: string) => void;
   enterRoom: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const isSignup = authMode === "signup";
-  const isOtp = supabaseEnabled && authMode === "otp";
-  const emailOnly = isOtp || authMode === "reset" || authMode === "resend";
+  const isOtp = supabaseEnabled && (authMode === "otp" || (isSignup && signupCodeSent));
+  const emailOnly = isOtp || authMode === "reset";
   const signupCoolingDown = authMode !== "signin" && !isOtp && signupCooldownSeconds > 0;
   const [showPassword, setShowPassword] = useState(false);
   const codeInput = useRef<HTMLInputElement>(null);
-  const titles: Record<AuthMode, string> = { signin: "回到你的房间", signup: "留一间房给自己", otp: "回到你的房间", reset: "找回你的密码", resend: "重新确认邮箱" };
+  const titles: Record<AuthMode, string> = { signin: "回到你的房间", signup: signupCodeSent ? "确认你的邮箱" : "留一间房给自己", otp: "回到你的房间", reset: "找回你的密码" };
+
+  useEffect(() => {
+    if (isSignup && signupCodeSent) codeInput.current?.focus();
+  }, [isSignup, signupCodeSent]);
 
   return (
     <main className="dream-shell auth-shell">
@@ -1973,13 +1974,12 @@ function AuthScreen({
             <p className="mt-4 text-sm leading-7 dream-muted sm:mt-5">
               {supabaseEnabled
                 ? isSignup
-                  ? signupCoolingDown
-                    ? "注册邮件已经发出。请先去邮箱确认，短时间内只支持提交一次注册。"
-                    : "注册后，梦境档案会保存到你的私密账户。"
+                  ? signupCodeSent
+                    ? "输入邮件中的验证码，开启你的私密梦境档案。"
+                    : "填写邮箱和密码，用邮件验证码开启你的私密档案。"
                   : isOtp ? "用邮箱验证码，回到你的私密梦境档案。"
                     : authMode === "reset" ? "输入注册邮箱，接收重置密码的邮件。"
-                      : authMode === "resend" ? "重新接收注册时的邮箱确认链接。"
-                        : "你的梦与思绪，都在这里等你。"
+                      : "你的梦与思绪，都在这里等你。"
                 : "给自己取一个称呼，从今晚的梦开始。"}
             </p>
 
@@ -2031,6 +2031,7 @@ function AuthScreen({
                     autoCapitalize="none"
                     value={loginEmail}
                     disabled={isAuthenticating}
+                    readOnly={isSignup && signupCodeSent}
                     onChange={(event) => setLoginEmail(event.target.value)}
                     className="dream-input mt-2"
                     placeholder="you@example.com"
@@ -2060,7 +2061,7 @@ function AuthScreen({
                     <button
                       type="button"
                       disabled={isAuthenticating || signupCooldownSeconds > 0 || !loginEmail.trim()}
-                      onClick={async () => { if (await sendLoginCode()) requestAnimationFrame(() => codeInput.current?.focus()); }}
+                      onClick={async () => { if (await sendAuthCode()) requestAnimationFrame(() => codeInput.current?.focus()); }}
                       className="quiet-button"
                     >{signupCooldownSeconds > 0 ? `${signupCooldownSeconds} 秒后重发` : "获取验证码"}</button>
                   </div>
@@ -2082,7 +2083,7 @@ function AuthScreen({
               </div>
             ) : null}
 
-            {(!supabaseEnabled || isSignup) ? (
+            {(!supabaseEnabled || (isSignup && !signupCodeSent)) ? (
               <div className="mt-6 space-y-4 sm:mt-7 sm:space-y-5">
                 <QuietField label="你的称呼" htmlFor="name">
                   <input
@@ -2120,20 +2121,23 @@ function AuthScreen({
                   ? "请稍候"
                   : signupCoolingDown
                     ? `${signupCooldownSeconds} 秒后可重新发送`
-                    : isOtp ? "验证并登录"
+                    : isOtp ? isSignup ? "验证并完成注册" : "验证并登录"
                     : emailOnly ? "发送邮件"
                     : supabaseEnabled
                       ? isSignup
-                        ? "建立账户"
+                        ? "获取注册验证码"
                         : "进入中庭"
                       : "进入中庭"}
               </span>
             </button>
 
             {supabaseEnabled ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs">
-              {emailOnly && !isOtp ? <button type="button" onClick={() => setAuthMode("otp")} className="text-link inline-flex items-center gap-1"><ArrowLeft size={14} />返回登录</button> : <>
+              {isSignup ? <>
+                <button type="button" disabled={isAuthenticating} onClick={() => setAuthMode("otp")} className="text-link inline-flex items-center gap-1"><ArrowLeft size={14} />返回登录</button>
+                {signupCodeSent ? <button type="button" disabled={isAuthenticating} onClick={restartSignup} className="text-link">修改注册信息</button> : null}
+              </> : emailOnly && !isOtp ? <button type="button" onClick={() => setAuthMode("otp")} className="text-link inline-flex items-center gap-1"><ArrowLeft size={14} />返回登录</button> : <>
                 <button type="button" onClick={() => setAuthMode(isOtp ? "signin" : "otp")} className="text-link inline-flex items-center gap-1">{isOtp ? <LockKeyhole size={14} /> : <Mail size={14} />}{isOtp ? "密码登录" : "验证码登录"}</button>
-                <button type="button" onClick={() => setAuthMode(isSignup ? "resend" : "reset")} className="text-link">{isSignup ? "重发确认邮件" : "忘记密码？"}</button>
+                <button type="button" onClick={() => setAuthMode("reset")} className="text-link">忘记密码？</button>
               </>}
             </div> : null}
 
